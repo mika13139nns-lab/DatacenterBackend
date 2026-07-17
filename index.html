@@ -5717,15 +5717,9 @@ body.required-password-lock{overflow:hidden!important}
     <div class="required-password-box" role="dialog" aria-modal="true" aria-labelledby="requiredPasswordTitle">
       <div class="required-password-icon">🔑</div>
       <h2 id="requiredPasswordTitle">تغییر رمز عبور الزامی است</h2>
-      <p>شما با رمز موقت وارد شده‌اید. برای ادامه استفاده از حساب، یک رمز شخصی و جدید تعیین کنید.</p>
+      <p>شما با رمز موقت وارد شده‌اید. رمز شخصی جدید را دو بار وارد کنید.</p>
 
       <form id="requiredPasswordForm" class="required-password-form" autocomplete="off" novalidate>
-        <label>
-          رمز موقت فعلی
-          <input id="requiredCurrentPassword" type="password" minlength="8" maxlength="64"
-                 autocomplete="current-password" placeholder="رمز موقت فعلی">
-        </label>
-
         <label>
           رمز جدید
           <input id="requiredNewPassword" type="password" minlength="8" maxlength="64"
@@ -10933,13 +10927,8 @@ async function apiRequest(action, options = {}){
   }
 
   if(action === "change_password"){
-    const currentPassword = String(data.current_password || "");
     const newPassword = String(data.new_password || "");
     const newPasswordConfirm = String(data.new_password_confirm || "");
-
-    if(!currentPassword){
-      throw new Error("رمز موقت فعلی را وارد کنید.");
-    }
 
     if(!Object.values(passwordRuleState(newPassword)).every(Boolean)){
       throw new Error("شرط‌های رمز جدید کامل نیست.");
@@ -10952,7 +10941,6 @@ async function apiRequest(action, options = {}){
     const result = await serverSessionRequest("/change-password", {
       method:"POST",
       data:{
-        current_password:currentPassword,
         new_password:newPassword,
         new_password_confirm:newPasswordConfirm
       }
@@ -11617,7 +11605,7 @@ function openRequiredPasswordModal(){
   document.body.classList.add("required-password-lock");
 
   window.setTimeout(() => {
-    $("#requiredCurrentPassword")?.focus();
+    $("#requiredNewPassword")?.focus();
   }, 50);
 }
 
@@ -12682,16 +12670,10 @@ $("#requiredPasswordForm")?.addEventListener("submit", async event => {
   const form = event.currentTarget;
   if(form.dataset.busy === "1") return;
 
-  const currentPassword = $("#requiredCurrentPassword")?.value || "";
   const newPassword = $("#requiredNewPassword")?.value || "";
   const confirmPassword = $("#requiredNewPasswordConfirm")?.value || "";
 
   requiredPasswordNotice("");
-
-  if(!currentPassword){
-    requiredPasswordNotice("رمز موقت فعلی را وارد کنید.");
-    return;
-  }
 
   if(!Object.values(passwordRuleState(newPassword)).every(Boolean)){
     requiredPasswordNotice("رمز جدید باید همه شرایط امنیتی را داشته باشد.");
@@ -12700,11 +12682,6 @@ $("#requiredPasswordForm")?.addEventListener("submit", async event => {
 
   if(newPassword !== confirmPassword){
     requiredPasswordNotice("تکرار رمز جدید یکسان نیست.");
-    return;
-  }
-
-  if(currentPassword === newPassword){
-    requiredPasswordNotice("رمز جدید باید با رمز موقت متفاوت باشد.");
     return;
   }
 
@@ -12720,7 +12697,6 @@ $("#requiredPasswordForm")?.addEventListener("submit", async event => {
   try{
     const data = await apiRequest("change_password", {
       data:{
-        current_password:currentPassword,
         new_password:newPassword,
         new_password_confirm:confirmPassword
       }
