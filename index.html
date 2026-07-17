@@ -5123,6 +5123,40 @@ body.required-password-lock{overflow:hidden!important}
   .required-password-logout{min-height:42px}
 }
 
+
+.admin-user-temp-form{
+  position:relative;
+  padding-top:46px;
+}
+.admin-user-temp-form .admin-temp-cancel{
+  position:absolute;
+  top:9px;
+  left:9px;
+  z-index:2;
+  width:30px;
+  min-width:30px;
+  height:30px;
+  min-height:30px;
+  padding:0;
+  display:grid;
+  place-items:center;
+  border:1px solid #efcbd2;
+  border-radius:9px;
+  background:#fff;
+  color:#b12b43;
+  font-size:21px;
+  line-height:1;
+  font-weight:700;
+  cursor:pointer;
+}
+.admin-user-temp-form .admin-temp-cancel:hover{
+  background:#fff0f3;
+}
+.admin-user-temp-form .admin-temp-cancel:disabled{
+  opacity:.55;
+  cursor:not-allowed;
+}
+
 </style>
 </head>
 <body data-page="home">
@@ -12892,6 +12926,12 @@ function renderAdminUsers(){
           </div>
 
           <form class="admin-user-temp-form" data-admin-user-temp-form="${user.id}">
+            <button type="button"
+                    class="admin-temp-cancel"
+                    data-admin-user-temp-cancel="${user.id}"
+                    aria-label="انصراف از تعیین رمز موقت"
+                    title="انصراف">×</button>
+
             <div class="password-label admin-temp-password-label">
               <input type="password" minlength="8" maxlength="64" autocomplete="new-password"
                      data-admin-temp-password="${user.id}" placeholder="رمز موقت قوی">
@@ -12964,16 +13004,52 @@ function renderAdminUsers(){
     });
   });
 
+  function closeAdminTempPasswordForm(form){
+    if(!form || form.dataset.busy === "1") return;
+
+    form.reset();
+    form.classList.remove("open");
+
+    form.querySelectorAll('input[type="text"]').forEach(input => {
+      input.type = "password";
+    });
+
+    form.querySelectorAll("[data-admin-temp-visibility]").forEach(button => {
+      button.innerHTML = "&#128065;";
+      button.setAttribute("aria-label", "نمایش رمز");
+    });
+  }
+
   $$("[data-admin-user-temp-toggle]").forEach(button => {
     button.addEventListener("click", () => {
       const userId = Number(button.dataset.adminUserTempToggle);
       const form = document.querySelector(
         `[data-admin-user-temp-form="${userId}"]`
       );
-      form?.classList.toggle("open");
-      if(form?.classList.contains("open")){
-        form.querySelector("input")?.focus();
+      if(!form) return;
+
+      if(form.classList.contains("open")){
+        closeAdminTempPasswordForm(form);
+        return;
       }
+
+      form.classList.add("open");
+      form.querySelector("input")?.focus();
+    });
+  });
+
+  $$("[data-admin-user-temp-cancel]").forEach(button => {
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const userId = Number(button.dataset.adminUserTempCancel);
+      const form = document.querySelector(
+        `[data-admin-user-temp-form="${userId}"]`
+      );
+
+      closeAdminTempPasswordForm(form);
+      showToast("تغییر رمز لغو شد و چیزی ذخیره نشد.");
     });
   });
 
@@ -13051,8 +13127,8 @@ function renderAdminUsers(){
           }
         );
 
-        form.reset();
-        form.classList.remove("open");
+        form.dataset.busy = "0";
+        closeAdminTempPasswordForm(form);
         showToast(result.message || "رمز موقت ثبت شد.");
         await loadServerAdminUsers();
       }catch(error){
