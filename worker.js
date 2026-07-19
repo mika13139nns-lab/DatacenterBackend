@@ -1224,7 +1224,11 @@ async function handleRegister(request, env) {
 
 async function handlePasswordLogin(request, env) {
   const body = await request.json().catch(() => ({}));
-  const identity = String(body.identity || "").trim();
+  const identity = String(
+    body.identity ||
+    body.username ||
+    ""
+  ).trim();
   const password = normalizePassword(body.password);
 
   if (!identity || !password) {

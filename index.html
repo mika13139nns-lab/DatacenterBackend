@@ -11394,7 +11394,7 @@ async function apiRequest(action, options = {}){
     }
 
     const result = await workerRequest("/admin-login", {
-      username:identity,
+      identity,
       password
     });
 
