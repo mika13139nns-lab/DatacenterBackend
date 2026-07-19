@@ -110,7 +110,7 @@ jobs:
           grep -q "order_request_keys" worker.js
           grep -q "store_reviews" worker.js
           grep -q "contact_messages" worker.js
-          grep -q "request_id:createOrderRequestId" index.html
+          grep -q "request_id:requestId" index.html
           grep -q "تقریبی" index.html
 
       - name: Upload audit diagnostics
