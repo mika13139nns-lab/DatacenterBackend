@@ -295,6 +295,13 @@ def cleanup() -> None:
             OTP_REQUEST_LOG.pop(phone, None)
 
 
+def to_int(value: Any, field_name: str) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError) as error:
+        raise ApiError(f"{field_name} معتبر نیست.") from error
+
+
 def make_tracking_code() -> str:
     stamp = int(now())
     return f"DC-{stamp:X}-{secrets.token_hex(2).upper()}"
@@ -1020,13 +1027,16 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(raw, dict):
                     raise ApiError("یکی از اقلام سفارش معتبر نیست.")
 
-                product_id = int(raw.get("product_id", 0))
+                product_id = to_int(raw.get("product_id", 0), "شناسه محصول")
                 name = str(raw.get("name", "")).strip()[:120]
-                quantity = int(raw.get("quantity", 0))
-                unit_price = int(raw.get("unit_price", 0))
-                original_price = int(raw.get("original_price", unit_price))
-                discount = int(raw.get("discount", 0))
-                line_total = int(raw.get("line_total", 0))
+                quantity = to_int(raw.get("quantity", 0), "تعداد محصول")
+                unit_price = to_int(raw.get("unit_price", 0), "قیمت محصول")
+                original_price = to_int(
+                    raw.get("original_price", unit_price),
+                    "قیمت اصلی محصول",
+                )
+                discount = to_int(raw.get("discount", 0), "تخفیف محصول")
+                line_total = to_int(raw.get("line_total", 0), "جمع ردیف محصول")
 
                 if (
                     product_id <= 0
@@ -1219,7 +1229,7 @@ class Handler(BaseHTTPRequestHandler):
             _, session = self.admin_session()
             self.require_csrf(session, "مدیر")
 
-            order_id = int(data.get("id", 0))
+            order_id = to_int(data.get("id", 0), "شناسه سفارش")
             status_value = str(data.get("status", ""))
             allowed = {
                 "new",
@@ -1257,7 +1267,7 @@ class Handler(BaseHTTPRequestHandler):
 
             _, session = self.admin_session()
             self.require_csrf(session, "مدیر")
-            order_id = int(data.get("id", 0))
+            order_id = to_int(data.get("id", 0), "شناسه سفارش")
 
             with LOCK:
                 index = next(
