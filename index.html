@@ -10708,7 +10708,9 @@ async function serverSessionRequest(path, options = {}){
       "/admin/products/sync":"admin_products_sync",
       "/reviews/sync":"reviews_sync",
       "/messages":"messages",
-      "/messages/sync":"messages_sync"
+      "/messages/sync":"messages_sync",
+      "/admin/users/wallet":"admin_wallet_update",
+      "/admin/users/wallet-history":"admin_wallet_history"
     };
     requestUrl.searchParams.set("action", actionMap[path] || path.replace(/^\//, ""));
 
@@ -11392,6 +11394,14 @@ async function apiRequest(action, options = {}){
       return serverSessionRequest("/messages/sync", {method:"POST", data:{messages:data.messages || []}});
     }
     return workerRequest("/messages/sync", {messages:data.messages || []});
+  }
+
+  if(action === "admin_wallet_update"){
+    return serverSessionRequest("/admin/users/wallet", {method:"POST", csrf:"admin", data});
+  }
+
+  if(action === "admin_wallet_history"){
+    return serverSessionRequest("/admin/users/wallet-history", {method:"POST", csrf:"admin", data});
   }
 
   if(action === "admin_orders"){
@@ -13756,6 +13766,220 @@ renderProducts();
 renderCart();
 renderAdminList();
 renderCurrentRoute(false);
+
+
+
+/* wallet-admin-v1 */
+(function setupWalletAdmin(){
+  const style = document.createElement("style");
+  style.textContent = `
+    #walletAdminLauncher{position:fixed;right:18px;bottom:18px;z-index:9997;border:0;border-radius:999px;padding:12px 17px;background:#15803d;color:#fff;font:inherit;font-weight:800;box-shadow:0 12px 30px rgba(0,0,0,.2);cursor:pointer}
+    #walletAdminLauncher[hidden]{display:none!important}
+    .wallet-admin-overlay{position:fixed;inset:0;z-index:9998;background:rgba(15,23,42,.62);display:none;align-items:center;justify-content:center;padding:14px;backdrop-filter:blur(4px)}
+    .wallet-admin-overlay.is-open{display:flex}
+    .wallet-admin-dialog{width:min(1050px,100%);max-height:92vh;overflow:auto;background:#fff;border-radius:24px;box-shadow:0 24px 80px rgba(0,0,0,.28);direction:rtl}
+    .wallet-admin-head{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:18px 20px;background:#fff;border-bottom:1px solid #e5e7eb;border-radius:24px 24px 0 0}
+    .wallet-admin-head h3{margin:0;font-size:1.15rem}.wallet-admin-close{border:0;background:#f3f4f6;border-radius:12px;width:40px;height:40px;font-size:22px;cursor:pointer}
+    .wallet-admin-body{padding:18px}.wallet-admin-tools{display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:14px}.wallet-admin-tools input{width:100%;border:1px solid #d1d5db;border-radius:12px;padding:12px;font:inherit}.wallet-admin-tools button,.wallet-action-btn,.wallet-submit{border:0;border-radius:12px;padding:11px 14px;font:inherit;font-weight:800;cursor:pointer;background:#15803d;color:#fff}
+    .wallet-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}.wallet-summary div{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:16px;padding:13px}.wallet-summary small{display:block;color:#64748b;margin-bottom:6px}.wallet-summary strong{font-size:1.05rem}
+    .wallet-user-list{display:grid;gap:10px}.wallet-user-card{display:grid;grid-template-columns:minmax(180px,1.5fr) minmax(130px,1fr) auto;align-items:center;gap:12px;border:1px solid #e5e7eb;border-radius:16px;padding:13px;background:#fff}.wallet-user-name{font-weight:900}.wallet-user-meta{font-size:.88rem;color:#64748b;margin-top:4px}.wallet-user-balance{font-weight:900;color:#166534}.wallet-empty{text-align:center;padding:28px;color:#64748b;background:#f8fafc;border-radius:16px}
+    .wallet-editor{display:none;border-top:1px solid #e5e7eb;padding:18px 20px;background:#f8fafc}.wallet-editor.is-open{display:block}.wallet-editor-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.wallet-field{display:grid;gap:6px}.wallet-field.wide{grid-column:1/-1}.wallet-field label{font-size:.88rem;font-weight:800;color:#334155}.wallet-field input,.wallet-field select,.wallet-field textarea{border:1px solid #cbd5e1;border-radius:12px;padding:11px;font:inherit;background:#fff}.wallet-field textarea{min-height:76px;resize:vertical}.wallet-editor-actions{display:flex;gap:10px;align-items:center;margin-top:12px}.wallet-secondary{border:1px solid #cbd5e1;border-radius:12px;padding:10px 14px;background:#fff;font:inherit;cursor:pointer}
+    .wallet-history{margin-top:16px}.wallet-history h4{margin:0 0 10px}.wallet-history-row{display:grid;grid-template-columns:auto 1fr auto;gap:10px;padding:10px 0;border-bottom:1px solid #e5e7eb}.wallet-delta{font-weight:900}.wallet-delta.plus{color:#15803d}.wallet-delta.minus{color:#b91c1c}.wallet-history small{color:#64748b}.wallet-loading{opacity:.62;pointer-events:none}
+    @media(max-width:700px){.wallet-summary{grid-template-columns:1fr}.wallet-user-card{grid-template-columns:1fr}.wallet-editor-grid{grid-template-columns:1fr}.wallet-field.wide{grid-column:auto}.wallet-admin-tools{grid-template-columns:1fr}.wallet-action-btn{width:100%}}
+  `;
+  document.head.appendChild(style);
+
+  const launcher = document.createElement("button");
+  launcher.id = "walletAdminLauncher";
+  launcher.type = "button";
+  launcher.textContent = "کیف پول کاربران";
+  launcher.hidden = true;
+  document.body.appendChild(launcher);
+
+  const overlay = document.createElement("div");
+  overlay.className = "wallet-admin-overlay";
+  overlay.id = "walletAdminOverlay";
+  overlay.innerHTML = `
+    <section class="wallet-admin-dialog" role="dialog" aria-modal="true" aria-labelledby="walletAdminTitle">
+      <header class="wallet-admin-head">
+        <div><h3 id="walletAdminTitle">مدیریت کیف پول کاربران</h3><small>مبالغ به تومان هستند و تمام تغییرها در تاریخچه ثبت می‌شوند.</small></div>
+        <button type="button" class="wallet-admin-close" aria-label="بستن">×</button>
+      </header>
+      <div class="wallet-admin-body">
+        <div class="wallet-admin-tools">
+          <input id="walletUserSearch" type="search" placeholder="جست‌وجو با نام، نام کاربری یا شماره موبایل">
+          <button id="walletUsersRefresh" type="button">تازه‌سازی کاربران</button>
+        </div>
+        <div class="wallet-summary">
+          <div><small>تعداد کاربران</small><strong id="walletSummaryUsers">۰</strong></div>
+          <div><small>کاربران دارای موجودی</small><strong id="walletSummaryPositive">۰</strong></div>
+          <div><small>مجموع موجودی کیف پول‌ها</small><strong id="walletSummaryTotal">۰ تومان</strong></div>
+        </div>
+        <div id="walletUserList" class="wallet-user-list"><div class="wallet-empty">در حال دریافت کاربران…</div></div>
+      </div>
+      <form id="walletEditor" class="wallet-editor">
+        <strong id="walletEditorUser">—</strong>
+        <div id="walletEditorCurrent" class="wallet-user-meta">موجودی فعلی: ۰ تومان</div>
+        <div class="wallet-editor-grid">
+          <div class="wallet-field"><label for="walletOperation">نوع تغییر</label><select id="walletOperation" required><option value="add">افزایش موجودی</option><option value="subtract">کاهش موجودی</option><option value="set">تعیین موجودی دقیق</option></select></div>
+          <div class="wallet-field"><label for="walletAmount">مبلغ (تومان)</label><input id="walletAmount" inputmode="numeric" autocomplete="off" placeholder="مثلاً 500000" required></div>
+          <div class="wallet-field wide"><label for="walletReason">دلیل تغییر</label><textarea id="walletReason" maxlength="200" placeholder="مثلاً هدیه خرید، اصلاح حساب یا برگشت وجه" required></textarea></div>
+        </div>
+        <div class="wallet-editor-actions"><button class="wallet-submit" type="submit">ثبت تغییر موجودی</button><button id="walletEditorCancel" class="wallet-secondary" type="button">بستن</button></div>
+        <div class="wallet-history"><h4>تاریخچه تغییرات</h4><div id="walletHistoryList"><div class="wallet-empty">یک کاربر را انتخاب کنید.</div></div></div>
+      </form>
+    </section>`;
+  document.body.appendChild(overlay);
+
+  const state = { users: [], selectedUserId: 0, busy: false };
+  const q = selector => overlay.querySelector(selector);
+  const toman = value => `${Math.max(0, Number(value || 0)).toLocaleString("fa-IR")} تومان`;
+  const signedToman = value => {
+    const amount = Number(value || 0);
+    return `${amount > 0 ? "+" : amount < 0 ? "−" : ""}${Math.abs(amount).toLocaleString("fa-IR")} تومان`;
+  };
+  const adminActive = () => {
+    try { return typeof isAdmin === "function" && Boolean(isAdmin()); }
+    catch { return false; }
+  };
+  const userBalance = user => Number(user?.wallet_balance ?? user?.walletBalance ?? 0) || 0;
+  const userLabel = user => String(user?.full_name || user?.username || user?.phone || `کاربر ${user?.id || ""}`);
+
+  function syncLauncher(){
+    const active = adminActive();
+    launcher.hidden = !active;
+    if(!active) closeWalletAdmin();
+  }
+
+  function setBusy(value){
+    state.busy = Boolean(value);
+    overlay.querySelector(".wallet-admin-dialog")?.classList.toggle("wallet-loading", state.busy);
+  }
+
+  function closeWalletAdmin(){
+    overlay.classList.remove("is-open");
+    document.body.style.removeProperty("overflow");
+  }
+
+  function openWalletAdmin(){
+    if(!adminActive()) return;
+    overlay.classList.add("is-open");
+    document.body.style.overflow = "hidden";
+    loadWalletUsers();
+  }
+
+  function updateSummary(){
+    const total = state.users.reduce((sum,user)=>sum+userBalance(user),0);
+    const positive = state.users.filter(user=>userBalance(user)>0).length;
+    q("#walletSummaryUsers").textContent = state.users.length.toLocaleString("fa-IR");
+    q("#walletSummaryPositive").textContent = positive.toLocaleString("fa-IR");
+    q("#walletSummaryTotal").textContent = toman(total);
+  }
+
+  function renderWalletUsers(){
+    const list = q("#walletUserList");
+    const needle = String(q("#walletUserSearch").value || "").trim().toLowerCase();
+    const filtered = state.users.filter(user => [user.full_name,user.username,user.phone,user.id]
+      .some(value => String(value || "").toLowerCase().includes(needle)));
+    list.replaceChildren();
+    if(!filtered.length){
+      const empty=document.createElement("div"); empty.className="wallet-empty"; empty.textContent="کاربری پیدا نشد."; list.appendChild(empty); return;
+    }
+    for(const user of filtered){
+      const card=document.createElement("article"); card.className="wallet-user-card";
+      const identity=document.createElement("div");
+      const name=document.createElement("div"); name.className="wallet-user-name"; name.textContent=userLabel(user);
+      const meta=document.createElement("div"); meta.className="wallet-user-meta"; meta.textContent=`${user.phone || "بدون شماره"}${user.username ? ` • @${user.username}` : ""}${user.is_active === false ? " • غیرفعال" : ""}`;
+      identity.append(name,meta);
+      const balance=document.createElement("div"); balance.className="wallet-user-balance"; balance.textContent=toman(userBalance(user));
+      const action=document.createElement("button"); action.type="button"; action.className="wallet-action-btn"; action.textContent="مدیریت موجودی"; action.addEventListener("click",()=>openWalletEditor(user));
+      card.append(identity,balance,action); list.appendChild(card);
+    }
+  }
+
+  async function loadWalletUsers(){
+    if(state.busy || !adminActive()) return;
+    setBusy(true);
+    try{
+      const data = await apiRequest("admin_users", {method:"GET"});
+      const rows = Array.isArray(data?.users) ? data.users : Array.isArray(data?.items) ? data.items : [];
+      state.users = rows.map(user => ({...user, wallet_balance:userBalance(user)}));
+      updateSummary(); renderWalletUsers();
+      if(state.selectedUserId){
+        const selected=state.users.find(user=>Number(user.id)===state.selectedUserId);
+        if(selected) updateWalletEditorHeader(selected);
+      }
+    }catch(error){
+      const list=q("#walletUserList"); list.innerHTML=""; const empty=document.createElement("div"); empty.className="wallet-empty"; empty.textContent=error.message || "دریافت کاربران انجام نشد."; list.appendChild(empty);
+    }finally{ setBusy(false); }
+  }
+
+  function updateWalletEditorHeader(user){
+    q("#walletEditorUser").textContent = userLabel(user);
+    q("#walletEditorCurrent").textContent = `موجودی فعلی: ${toman(userBalance(user))}`;
+  }
+
+  async function openWalletEditor(user){
+    state.selectedUserId=Number(user.id);
+    updateWalletEditorHeader(user);
+    q("#walletAmount").value=""; q("#walletReason").value=""; q("#walletOperation").value="add";
+    q("#walletEditor").classList.add("is-open");
+    q("#walletAmount").focus();
+    await loadWalletHistory(state.selectedUserId);
+  }
+
+  async function loadWalletHistory(userId){
+    const host=q("#walletHistoryList"); host.innerHTML='<div class="wallet-empty">در حال دریافت تاریخچه…</div>';
+    try{
+      const data=await apiRequest("admin_wallet_history",{csrf:"admin",data:{user_id:userId}});
+      if(data?.user){
+        const local=state.users.find(user=>Number(user.id)===Number(data.user.id));
+        if(local) local.wallet_balance=userBalance(data.user);
+        updateSummary(); renderWalletUsers(); updateWalletEditorHeader(data.user);
+      }
+      const rows=Array.isArray(data?.transactions)?data.transactions:[];
+      host.replaceChildren();
+      if(!rows.length){const empty=document.createElement("div");empty.className="wallet-empty";empty.textContent="هنوز تغییری برای این کیف پول ثبت نشده است.";host.appendChild(empty);return;}
+      for(const row of rows){
+        const item=document.createElement("div");item.className="wallet-history-row";
+        const delta=document.createElement("div");delta.className=`wallet-delta ${Number(row.delta)>=0?"plus":"minus"}`;delta.textContent=signedToman(row.delta);
+        const info=document.createElement("div");const reason=document.createElement("div");reason.textContent=row.reason || "بدون توضیح";const admin=document.createElement("small");admin.textContent=`توسط ${row.admin_username || "مدیر"} • موجودی بعد: ${toman(row.balance_after)}`;info.append(reason,admin);
+        const date=document.createElement("small");const parsed=new Date(row.created_at);date.textContent=Number.isNaN(parsed.getTime())?"—":parsed.toLocaleString("fa-IR");
+        item.append(delta,info,date);host.appendChild(item);
+      }
+    }catch(error){host.innerHTML="";const empty=document.createElement("div");empty.className="wallet-empty";empty.textContent=error.message || "دریافت تاریخچه انجام نشد.";host.appendChild(empty);}
+  }
+
+  q("#walletEditor").addEventListener("submit",async event=>{
+    event.preventDefault(); if(state.busy || !state.selectedUserId) return;
+    const operation=q("#walletOperation").value;
+    const amount=String(q("#walletAmount").value||"").replace(/[\s,٬،]/g,"");
+    const reason=q("#walletReason").value.trim();
+    if(!/^\d+$/.test(amount) || (operation!=="set" && Number(amount)<1)){showToast("مبلغ معتبر وارد کنید.");return;}
+    if(reason.length<3){showToast("دلیل تغییر موجودی را بنویسید.");return;}
+    const requestKey=`wallet:${crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+    setBusy(true);
+    try{
+      const data=await apiRequest("admin_wallet_update",{csrf:"admin",data:{user_id:state.selectedUserId,operation,amount,reason,request_key:requestKey}});
+      const local=state.users.find(user=>Number(user.id)===state.selectedUserId);
+      if(local) local.wallet_balance=Number(data.wallet_balance||0);
+      updateSummary();renderWalletUsers();if(local)updateWalletEditorHeader(local);
+      q("#walletAmount").value="";q("#walletReason").value="";
+      showToast(data.message || "موجودی تغییر کرد.");
+      await loadWalletHistory(state.selectedUserId);
+    }catch(error){showToast(error.message || "تغییر موجودی انجام نشد.");}
+    finally{setBusy(false);}
+  });
+
+  launcher.addEventListener("click",openWalletAdmin);
+  q(".wallet-admin-close").addEventListener("click",closeWalletAdmin);
+  q("#walletEditorCancel").addEventListener("click",()=>q("#walletEditor").classList.remove("is-open"));
+  q("#walletUsersRefresh").addEventListener("click",loadWalletUsers);
+  q("#walletUserSearch").addEventListener("input",renderWalletUsers);
+  overlay.addEventListener("click",event=>{if(event.target===overlay)closeWalletAdmin();});
+  document.addEventListener("keydown",event=>{if(event.key==="Escape"&&overlay.classList.contains("is-open"))closeWalletAdmin();});
+  window.setInterval(syncLauncher,1000); syncLauncher();
+})();
 
 
 /* شمارنده واقعی کاربران آنلاین؛ بدون عدد ساختگی یا مقدار پیش‌فرض */
