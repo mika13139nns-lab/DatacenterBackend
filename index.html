@@ -3582,9 +3582,9 @@ body.support-modal-open{
 
 .order-status-new{background:#fff3cd;color:#7a5b00}
 .order-status-confirmed{background:#e8ebff;color:#4655c7}
-.order-status-preparing{background:#e5f4ff;color:#176b9d}
+.order-status-processing{background:#e5f4ff;color:#176b9d}
 .order-status-shipped{background:#e8f7ef;color:#16704b}
-.order-status-completed{background:#dff6e9;color:#0c6b41}
+.order-status-delivered{background:#dff6e9;color:#0c6b41}
 .order-status-cancelled{background:#fbe7ea;color:#9e283b}
 
 .admin-order-body{
@@ -5163,6 +5163,20 @@ body:not(.admin-mode) .card-management{
   display:none!important;
 }
 
+
+.order-status-build{
+  display:inline-flex;
+  align-items:center;
+  min-height:24px;
+  padding:0 9px;
+  margin-inline-start:8px;
+  border-radius:999px;
+  background:#eef0ff;
+  color:var(--primary);
+  font-size:9px;
+  font-weight:900;
+}
+
 </style>
 </head>
 <body data-page="home">
@@ -6188,7 +6202,7 @@ body:not(.admin-mode) .card-management{
       <div class="admin-orders admin-wide" data-admin-section="sales">
         <div class="admin-products-title admin-orders-title">
           <div>
-            <h3>مدیریت سفارش‌ها</h3>
+            <h3>مدیریت سفارش‌ها <span class="order-status-build">نسخه وضعیت ۳</span></h3>
             <small>جست‌وجو با کد سفارش، نام مشتری یا شماره تماس</small>
           </div>
           <span id="adminOrderCount">۰ سفارش</span>
@@ -6199,9 +6213,9 @@ body:not(.admin-mode) .card-management{
           <select id="adminOrderStatusFilter">
             <option value="all">همه وضعیت‌ها</option>
             <option value="new">جدید</option>
-            <option value="preparing">در حال آماده‌سازی</option>
+            <option value="processing">در حال پردازش</option>
             <option value="shipped">ارسال‌شده</option>
-            <option value="completed">تکمیل‌شده</option>
+            <option value="delivered">تحویل‌شده</option>
             <option value="cancelled">لغوشده</option>
           </select>
         </div>
@@ -6785,11 +6799,46 @@ document.addEventListener("beforeinput", event => {
 
 const ORDER_STATUSES = Object.freeze({
   new:"جدید",
-  preparing:"در حال آماده‌سازی",
+  processing:"در حال پردازش",
   shipped:"ارسال‌شده",
-  completed:"تکمیل‌شده",
+  delivered:"تحویل‌شده",
   cancelled:"لغوشده"
 });
+
+const ORDER_STATUS_ALIASES = Object.freeze({
+  pending:"new",
+  confirmed:"processing",
+  preparing:"processing",
+  sent:"shipped",
+  completed:"delivered",
+  complete:"delivered",
+  canceled:"cancelled"
+});
+
+function normalizeUiOrderStatus(value, fallback = "new"){
+  const raw = String(value ?? "")
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase();
+
+  const normalized = ORDER_STATUS_ALIASES[raw] || raw;
+
+  return Object.prototype.hasOwnProperty.call(
+    ORDER_STATUSES,
+    normalized
+  )
+    ? normalized
+    : fallback;
+}
+
+function normalizeServerOrderRecord(order){
+  if(!order || typeof order !== "object") return order;
+
+  return {
+    ...order,
+    status:normalizeUiOrderStatus(order.status)
+  };
+}
 
 function normalizeOrderItem(input){
   if(!input || typeof input !== "object") return null;
@@ -8159,7 +8208,7 @@ function closeCheckout(){
 }
 
 function orderStatusClass(status){
-  return `order-status-${Object.prototype.hasOwnProperty.call(ORDER_STATUSES, status) ? status : "new"}`;
+  return `order-status-${normalizeUiOrderStatus(status)}`;
 }
 
 
@@ -11733,7 +11782,9 @@ function serverOrderDate(value){
 }
 
 function serverOrderStatus(status){
-  return ORDER_STATUSES[status] || status;
+  return ORDER_STATUSES[
+    normalizeUiOrderStatus(status)
+  ] || "نامشخص";
 }
 
 function renderProfileAvatar(target, avatar){
@@ -11810,7 +11861,9 @@ async function accountBootstrap(showError = false, enforcePasswordChange = true)
     const data = await apiRequest("me", {method:"GET"});
     accountCsrf = data.csrf || "";
     currentUser = data.authenticated ? data.user : null;
-    accountOrders = data.orders || [];
+    accountOrders = Array.isArray(data.orders)
+      ? data.orders.map(normalizeServerOrderRecord)
+      : [];
     updateAccountButton();
     renderAccountProfile();
 
@@ -13233,16 +13286,276 @@ $("#refreshAdminUsers")?.addEventListener(
 
 /* پنل سفارش‌های دیتابیس */
 async function loadServerAdminOrders(){
-  if(!isAdmin())return;
-  try{const data=await apiRequest("admin_orders",{method:"GET",query:{q:$("#adminOrderSearch")?.value||"",status:$("#adminOrderStatusFilter")?.value||"all"}});serverAdminOrders=data.orders||[];serverAdminCsrf=data.csrf||serverAdminCsrf;renderAdminOrders();}catch(e){$("#adminOrderList").innerHTML=`<div class="admin-empty">${escapeHtml(e.message)}</div>`;}
+  if(!isAdmin()) return;
+
+  const list = $("#adminOrderList");
+
+  try{
+    const data = await apiRequest("admin_orders", {
+      method:"GET",
+      query:{
+        q:$("#adminOrderSearch")?.value || "",
+        status:normalizeUiOrderStatusFilter(
+          $("#adminOrderStatusFilter")?.value
+        )
+      }
+    });
+
+    serverAdminOrders = Array.isArray(data.orders)
+      ? data.orders.map(normalizeServerOrderRecord)
+      : [];
+
+    serverAdminCsrf = data.csrf || serverAdminCsrf;
+    renderAdminOrders();
+  }catch(error){
+    if(list){
+      list.innerHTML = `
+        <div class="admin-empty">
+          ${escapeHtml(error.message)}
+        </div>
+      `;
+    }
+  }
 }
+
+function normalizeUiOrderStatusFilter(value){
+  const raw = String(value || "all").trim().toLowerCase();
+
+  if(raw === "all") return "all";
+
+  return normalizeUiOrderStatus(raw);
+}
+
 function renderAdminOrders(){
-  const list=$("#adminOrderList"),count=$("#adminOrderCount");if(!list||!count)return;
-  const newCount=serverAdminOrders.filter(o=>o.status==="new").length;count.textContent=newCount?`${fa(serverAdminOrders.length)} سفارش · ${fa(newCount)} جدید`:`${fa(serverAdminOrders.length)} سفارش`;
-  if(!serverAdminOrders.length){list.innerHTML=`<div class="admin-empty">سفارشی در دیتابیس پیدا نشد.</div>`;return;}
-  list.innerHTML=serverAdminOrders.map(order=>`<article class="admin-order-card ${order.status==="new"?"is-new":""}"><div class="admin-order-head"><div class="admin-order-code"><strong>${escapeHtml(order.code)}</strong><small class="admin-order-quantity-summary">تعداد کل: ${fa(order.items.reduce((s,i)=>s+i.quantity,0))} عدد</small></div><div><span class="order-status-badge ${orderStatusClass(order.status)}">${escapeHtml(serverOrderStatus(order.status))}</span><div class="admin-order-date">${serverOrderDate(order.created_at)}</div></div></div><div class="admin-order-body"><div class="admin-order-customer"><div class="admin-order-field"><span>نام مشتری</span><strong>${escapeHtml(order.customer_name)}</strong></div><div class="admin-order-field"><span>شماره تماس</span><strong>${escapeHtml(order.phone)}</strong></div><div class="admin-order-field"><span>روش دریافت</span><strong>${order.delivery==="pickup"?"تحویل حضوری":"ارسال به آدرس"}</strong></div><div class="admin-order-field"><span>استان و شهر</span><strong>${escapeHtml(order.province)}، ${escapeHtml(order.city)}</strong></div><div class="admin-order-field"><span>کد پستی</span><strong>${escapeHtml(order.postal_code)}</strong></div><div class="admin-order-field admin-order-address"><span>آدرس کامل</span><p>${escapeHtml(order.address)}</p></div><div class="admin-order-field admin-order-address"><span>توضیحات</span><p>${escapeHtml(order.note)}</p></div></div><div class="admin-order-items">${order.items.map(item=>`<div class="admin-order-item"><strong>${escapeHtml(item.name)}</strong><span class="order-item-qty">تعداد: ${fa(item.quantity)}</span><span>قیمت واحد: ${money(item.unit_price)}</span><span>جمع: ${money(item.line_total)}</span></div>`).join("")}</div><div class="admin-order-total"><span>مبلغ کل سفارش</span><strong>${money(order.total)}</strong></div><div class="admin-order-actions"><select data-server-order-status="${order.id}">${Object.entries(ORDER_STATUSES).map(([v,l])=>`<option value="${v}" ${order.status===v?"selected":""}>${l}</option>`).join("")}</select><a href="tel:${escapeAttribute(order.phone)}">تماس با مشتری</a><button type="button" class="delete-order" data-server-order-delete="${order.id}">حذف سفارش</button></div></div></article>`).join("");
-  $$('[data-server-order-status]').forEach(select=>select.addEventListener('change',async()=>{try{await apiRequest("admin_order_status",{csrf:"admin",data:{id:Number(select.dataset.serverOrderStatus),status:select.value}});showToast("وضعیت سفارش تغییر کرد.");await loadServerAdminOrders();await loadServerProducts();}catch(e){showToast(e.message);await loadServerAdminOrders();}}));
-  $$('[data-server-order-delete]').forEach(button=>button.addEventListener('click',async()=>{if(!confirm("سفارش حذف شود؟"))return;try{await apiRequest("admin_order_delete",{csrf:"admin",data:{id:Number(button.dataset.serverOrderDelete)}});showToast("سفارش حذف و موجودی بازگردانده شد.");await loadServerAdminOrders();await loadServerProducts();}catch(e){showToast(e.message);}}));
+  const list = $("#adminOrderList");
+  const count = $("#adminOrderCount");
+
+  if(!list || !count) return;
+
+  serverAdminOrders = serverAdminOrders.map(
+    normalizeServerOrderRecord
+  );
+
+  const newCount = serverAdminOrders.filter(
+    order => order.status === "new"
+  ).length;
+
+  count.textContent = newCount
+    ? `${fa(serverAdminOrders.length)} سفارش · ${fa(newCount)} جدید`
+    : `${fa(serverAdminOrders.length)} سفارش`;
+
+  if(!serverAdminOrders.length){
+    list.innerHTML = `
+      <div class="admin-empty">
+        سفارشی در دیتابیس پیدا نشد.
+      </div>
+    `;
+    return;
+  }
+
+  list.innerHTML = serverAdminOrders.map(order => {
+    const currentStatus = normalizeUiOrderStatus(order.status);
+    const itemCount = Array.isArray(order.items)
+      ? order.items.reduce(
+          (sum, item) => sum + Number(item.quantity || 0),
+          0
+        )
+      : 0;
+
+    return `
+      <article class="admin-order-card ${currentStatus === "new" ? "is-new" : ""}"
+               data-order-card="${order.id}">
+        <div class="admin-order-head">
+          <div class="admin-order-code">
+            <strong>${escapeHtml(order.code)}</strong>
+            <small class="admin-order-quantity-summary">
+              تعداد کل: ${fa(itemCount)} عدد
+            </small>
+          </div>
+
+          <div>
+            <span class="order-status-badge ${orderStatusClass(currentStatus)}"
+                  data-order-status-badge="${order.id}">
+              ${escapeHtml(serverOrderStatus(currentStatus))}
+            </span>
+            <div class="admin-order-date">
+              ${serverOrderDate(order.created_at)}
+            </div>
+          </div>
+        </div>
+
+        <div class="admin-order-body">
+          <div class="admin-order-customer">
+            <div class="admin-order-field">
+              <span>نام مشتری</span>
+              <strong>${escapeHtml(order.customer_name)}</strong>
+            </div>
+
+            <div class="admin-order-field">
+              <span>شماره تماس</span>
+              <strong>${escapeHtml(order.phone)}</strong>
+            </div>
+
+            <div class="admin-order-field">
+              <span>روش دریافت</span>
+              <strong>
+                ${order.delivery === "pickup"
+                  ? "تحویل حضوری"
+                  : "ارسال به آدرس"}
+              </strong>
+            </div>
+
+            <div class="admin-order-field">
+              <span>استان و شهر</span>
+              <strong>
+                ${escapeHtml(order.province)}، ${escapeHtml(order.city)}
+              </strong>
+            </div>
+
+            <div class="admin-order-field">
+              <span>کد پستی</span>
+              <strong>${escapeHtml(order.postal_code)}</strong>
+            </div>
+
+            <div class="admin-order-field admin-order-address">
+              <span>آدرس کامل</span>
+              <p>${escapeHtml(order.address)}</p>
+            </div>
+
+            <div class="admin-order-field admin-order-address">
+              <span>توضیحات</span>
+              <p>${escapeHtml(order.note)}</p>
+            </div>
+          </div>
+
+          <div class="admin-order-items">
+            ${(order.items || []).map(item => `
+              <div class="admin-order-item">
+                <strong>${escapeHtml(item.name)}</strong>
+                <span class="order-item-qty">
+                  تعداد: ${fa(item.quantity)}
+                </span>
+                <span>قیمت واحد: ${money(item.unit_price)}</span>
+                <span>جمع: ${money(item.line_total)}</span>
+              </div>
+            `).join("")}
+          </div>
+
+          <div class="admin-order-total">
+            <span>مبلغ کل سفارش</span>
+            <strong>${money(order.total)}</strong>
+          </div>
+
+          <div class="admin-order-actions">
+            <select data-server-order-status="${order.id}"
+                    aria-label="وضعیت سفارش">
+              ${Object.entries(ORDER_STATUSES)
+                .map(([value, label]) => `
+                  <option value="${value}"
+                    ${currentStatus === value ? "selected" : ""}>
+                    ${label}
+                  </option>
+                `)
+                .join("")}
+            </select>
+
+            <a href="tel:${escapeAttribute(order.phone)}">
+              تماس با مشتری
+            </a>
+
+            <button type="button"
+                    class="delete-order"
+                    data-server-order-delete="${order.id}">
+              حذف سفارش
+            </button>
+          </div>
+        </div>
+      </article>
+    `;
+  }).join("");
+
+  $$("[data-server-order-status]").forEach(select => {
+    select.addEventListener("change", async () => {
+      const orderId = Number(select.dataset.serverOrderStatus);
+      const previousOrder = serverAdminOrders.find(
+        item => Number(item.id) === orderId
+      );
+      const previousStatus = normalizeUiOrderStatus(
+        previousOrder?.status
+      );
+      const nextStatus = normalizeUiOrderStatus(select.value);
+
+      if(nextStatus === previousStatus){
+        select.value = previousStatus;
+        return;
+      }
+
+      select.disabled = true;
+
+      try{
+        const result = await apiRequest("admin_order_status", {
+          csrf:"admin",
+          data:{
+            id:orderId,
+            status:nextStatus
+          }
+        });
+
+        const updatedOrder = normalizeServerOrderRecord(
+          result.order || {
+            ...previousOrder,
+            status:nextStatus
+          }
+        );
+
+        serverAdminOrders = serverAdminOrders.map(order =>
+          Number(order.id) === orderId
+            ? updatedOrder
+            : order
+        );
+
+        renderAdminOrders();
+        showToast(
+          result.message || "وضعیت سفارش تغییر کرد."
+        );
+
+        await loadServerProducts();
+      }catch(error){
+        select.value = previousStatus;
+        showToast(error.message);
+        await loadServerAdminOrders();
+      }finally{
+        select.disabled = false;
+      }
+    });
+  });
+
+  $$("[data-server-order-delete]").forEach(button => {
+    button.addEventListener("click", async () => {
+      if(!confirm("سفارش حذف شود؟")) return;
+
+      button.disabled = true;
+
+      try{
+        await apiRequest("admin_order_delete", {
+          csrf:"admin",
+          data:{
+            id:Number(button.dataset.serverOrderDelete)
+          }
+        });
+
+        showToast(
+          "سفارش حذف و موجودی بازگردانده شد."
+        );
+
+        await loadServerAdminOrders();
+        await loadServerProducts();
+      }catch(error){
+        showToast(error.message);
+        button.disabled = false;
+      }
+    });
+  });
 }
 
 /* ورود مدیر روی سرور؛ handler قدیمی متوقف می‌شود */
@@ -13328,7 +13641,16 @@ $("#backToStore")?.addEventListener("click", event => {
 });
 
 $("#adminOrderSearch").addEventListener("input",()=>{clearTimeout(window.__orderSearchTimer);window.__orderSearchTimer=setTimeout(loadServerAdminOrders,300);}, true);
-$("#adminOrderStatusFilter").addEventListener("change",loadServerAdminOrders,true);
+$("#adminOrderStatusFilter").addEventListener(
+  "change",
+  event => {
+    event.target.value = normalizeUiOrderStatusFilter(
+      event.target.value
+    );
+    loadServerAdminOrders();
+  },
+  true
+);
 
 window.setTimeout(async()=>{await accountBootstrap();await loadServerProducts();},0);
 
