@@ -873,6 +873,7 @@ function routeApiAction(request, url) {
     logout: { method: "POST", pathname: "/logout" },
     products: { method: "GET", pathname: "/products" },
     create_order: { method: "POST", pathname: "/orders" },
+    orders_my: { method: "GET", pathname: "/orders/my" },
     track_order: { method: "POST", pathname: "/orders/track" },
     admin_login: { method: "POST", pathname: "/admin-login" },
     admin_users: { method: "GET", pathname: "/admin/users" },
@@ -885,7 +886,12 @@ function routeApiAction(request, url) {
     admin_order_delete: { method: "POST", pathname: "/admin/orders/delete" }
   };
 
-  return routes[action] || { method: request.method, pathname: url.pathname };
+  const alias = action.replaceAll("-", "_");
+
+  return routes[action] || routes[alias] || {
+    method: request.method,
+    pathname: url.pathname
+  };
 }
 
 async function handleRequestCode(request, env) {
