@@ -7513,8 +7513,22 @@ function saveReviews(){
   renderAdminReviews();
   renderAdminMessages();
   renderFestival();
+  syncReviewsToServer();
 }
 
+async function syncReviewsToServer(){
+  try{
+    const data = await apiRequest("reviews_sync",{data:{reviews}});
+    if(Array.isArray(data.reviews)){ reviews=data.reviews.map(normalizeReview).filter(Boolean); safeStorageSet("local","datacenter-reviews",JSON.stringify(reviews)); renderReviews(); renderAdminReviews(); }
+  }catch(error){ console.warn("Review sync:",error.message); }
+}
+
+async function loadServerReviews(admin=false){
+  try{
+    const data = admin && getServerSessionToken() ? await serverSessionRequest("/reviews",{method:"GET"}) : await apiRequest("reviews",{method:"GET"});
+    if(Array.isArray(data.reviews)){ reviews=data.reviews.map(normalizeReview).filter(Boolean); safeStorageSet("local","datacenter-reviews",JSON.stringify(reviews)); renderReviews(); renderAdminReviews(); }
+  }catch(error){ console.warn("Review load:",error.message); }
+}
 
 function saveMessages(){
   messages = messages
@@ -7529,6 +7543,16 @@ function saveMessages(){
   );
 
   renderAdminMessages();
+  syncMessagesToServer();
+}
+
+async function syncMessagesToServer(){
+  try{ await apiRequest("messages_sync",{data:{messages}}); }catch(error){ console.warn("Message sync:",error.message); }
+}
+
+async function loadServerMessages(){
+  if(!getServerSessionToken()) return;
+  try{ const data=await apiRequest("messages",{method:"GET"}); if(Array.isArray(data.messages)){ messages=data.messages.map(normalizeMessage).filter(Boolean); safeStorageSet("local","datacenter-contact-messages",JSON.stringify(messages)); renderAdminMessages(); } }catch(error){ console.warn("Message load:",error.message); }
 }
 
 function saveCart(){
@@ -8853,6 +8877,7 @@ function showAdminSection(section){
     renderFestivalProductEditor();
   }else if(safeSection === "reviews"){
     renderAdminReviews();
+    loadServerReviews(true);
   }else if(safeSection === "sales"){
     renderAdminOrders();
     if(serverAdminCsrf){
@@ -8865,6 +8890,7 @@ function showAdminSection(section){
     }
   }else if(safeSection === "contact"){
     renderAdminMessages();
+    loadServerMessages();
   }
 
   const panel = $("#adminPanel");
@@ -9761,21 +9787,21 @@ function validateCheckoutFormPersian(){
     );
   }
 
-  if(!isValidPersianLocation(province)){
+  if(delivery !== "pickup" && !isValidPersianLocation(province)){
     invalidate(
       "checkoutProvince",
       "نام استان را فقط با حروف فارسی وارد کنید."
     );
   }
 
-  if(!isValidPersianLocation(city)){
+  if(delivery !== "pickup" && !isValidPersianLocation(city)){
     invalidate(
       "checkoutCity",
       "نام شهر را فقط با حروف فارسی وارد کنید."
     );
   }
 
-  if(!/^\d{5,20}$/.test(postalCode)){
+  if(delivery !== "pickup" && !/^\d{5,20}$/.test(postalCode)){
     invalidate(
       "checkoutPostalCode",
       "کد پستی را فقط با عدد و حداقل ۵ رقم وارد کنید."
@@ -9786,7 +9812,7 @@ function validateCheckoutFormPersian(){
     invalidate("checkoutDelivery", "روش دریافت را انتخاب کنید.");
   }
 
-  if(address.length < 5){
+  if(delivery !== "pickup" && address.length < 5){
     invalidate("checkoutAddress", "آدرس کامل را وارد کنید.");
   }
 
@@ -9832,7 +9858,7 @@ $("#checkoutDelivery").addEventListener("change", () => {
   const pickup = $("#checkoutDelivery").value === "pickup";
   const address = $("#checkoutAddress");
 
-  address.required = true;
+  address.required = !pickup;
   address.placeholder = pickup
     ? "نام تحویل‌گیرنده و توضیحات لازم برای تحویل حضوری"
     : "خیابان، کوچه، پلاک، واحد و نشانی دقیق";
@@ -10679,7 +10705,10 @@ async function serverSessionRequest(path, options = {}){
       "/admin/orders":"admin_orders",
       "/admin/orders/status":"admin_order_status",
       "/admin/orders/delete":"admin_order_delete",
-      "/admin/products/sync":"admin_products_sync"
+      "/admin/products/sync":"admin_products_sync",
+      "/reviews/sync":"reviews_sync",
+      "/messages":"messages",
+      "/messages/sync":"messages_sync"
     };
     requestUrl.searchParams.set("action", actionMap[path] || path.replace(/^\//, ""));
 
@@ -10829,7 +10858,9 @@ async function workerRequest(path, data){
       "/login":"login",
       "/reset-password":"reset_password",
       "/orders/track":"track_order",
-      "/admin-login":"admin_login"
+      "/admin-login":"admin_login",
+      "/reviews/sync":"reviews_sync",
+      "/messages/sync":"messages_sync"
     };
     const requestUrl = new URL(workerUrl("/api"), window.location.href);
     requestUrl.searchParams.set("action", actionMap[path] || path.replace(/^\//, ""));
@@ -11331,9 +11362,36 @@ async function apiRequest(action, options = {}){
       data:{
         products:Array.isArray(data.products)
           ? data.products
-          : []
+          : [],
+        festival:data.festival && typeof data.festival === "object"
+          ? data.festival
+          : {}
       }
     });
+  }
+
+  if(action === "reviews"){
+    return publicWorkerGet("/reviews");
+  }
+
+  if(action === "reviews_sync"){
+    const token = getServerSessionToken();
+    if(token){
+      return serverSessionRequest("/reviews/sync", {method:"POST", data:{reviews:data.reviews || []}});
+    }
+    return workerRequest("/reviews/sync", {reviews:data.reviews || []});
+  }
+
+  if(action === "messages"){
+    return serverSessionRequest("/messages", {method:"GET"});
+  }
+
+  if(action === "messages_sync"){
+    const token = getServerSessionToken();
+    if(token){
+      return serverSessionRequest("/messages/sync", {method:"POST", data:{messages:data.messages || []}});
+    }
+    return workerRequest("/messages/sync", {messages:data.messages || []});
   }
 
   if(action === "admin_orders"){
@@ -12904,6 +12962,7 @@ function openCheckout(){
   if(!currentCartOrderItems().length){showToast("سبد خرید خالی است.");return;}
   closeCart();renderCheckoutSummary();clearCheckoutErrors();
   const phone=$("#checkoutPhone");phone.value=currentUser.phone;phone.readOnly=true;phone.removeAttribute("data-no-autofill");
+  const applyDeliveryMode=()=>{const pickup=$("#checkoutDelivery").value==="pickup";["checkoutProvince","checkoutCity","checkoutPostalCode","checkoutAddress"].forEach(id=>{const field=$("#"+id);if(!field)return;field.required=!pickup;field.disabled=pickup;if(pickup)clearCheckoutFieldError(id);});};applyDeliveryMode();$("#checkoutDelivery").onchange=applyDeliveryMode;
   $$('#checkoutForm [data-no-autofill="true"]').forEach(field=>{if(!field.value)field.readOnly=true;});
   resetCheckoutResultView();
   const modal=$("#checkoutModal");modal.classList.add("open");modal.setAttribute("aria-hidden","false");document.body.classList.add("locked");
@@ -12916,8 +12975,10 @@ $("#checkoutForm").addEventListener("submit", async event => {
   if(!currentUser){openAccountModal("login","نشست شما تمام شده است؛ دوباره وارد شوید.");return;}
   if(!validateCheckoutFormPersian())return;
   const items=currentCartOrderItems();if(!items.length){showToast("سبد خرید خالی است.");return;}
+  const form=event.currentTarget;if(form.dataset.busy==="1")return;form.dataset.busy="1";const submit=event.submitter||form.querySelector('button[type="submit"]');if(submit)submit.disabled=true;
+  const requestId=crypto.randomUUID?.()||`${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try{
-    const data=await apiRequest("create_order",{csrf:"user",data:{customer_name:$("#checkoutName").value,province:$("#checkoutProvince").value,city:$("#checkoutCity").value,postal_code:$("#checkoutPostalCode").value,address:$("#checkoutAddress").value,delivery:$("#checkoutDelivery").value,note:$("#checkoutNote").value,items:items.map(i=>({product_id:i.productId,name:i.name,quantity:i.quantity,unit_price:i.unitPrice,original_price:i.originalPrice,discount:i.discount,line_total:i.lineTotal}))}});
+    const data=await apiRequest("create_order",{csrf:"user",data:{request_id:requestId,customer_name:$("#checkoutName").value,province:$("#checkoutProvince").value,city:$("#checkoutCity").value,postal_code:$("#checkoutPostalCode").value,address:$("#checkoutAddress").value,delivery:$("#checkoutDelivery").value,note:$("#checkoutNote").value,items:items.map(i=>({product_id:i.productId,name:i.name,quantity:i.quantity,unit_price:i.unitPrice,original_price:i.originalPrice,discount:i.discount,line_total:i.lineTotal}))}});
     cart=[];
     saveCart();
     event.target.reset();
@@ -12925,7 +12986,7 @@ $("#checkoutForm").addEventListener("submit", async event => {
     await accountBootstrap();
     await loadServerProducts();
     showToast("سفارش ثبت شد؛ کد پیگیری را نگه دارید.");
-  }catch(e){showToast(e.message);}
+  }catch(e){showToast(e.message);}finally{form.dataset.busy="0";if(submit)submit.disabled=false;}
 }, true);
 
 /* پیگیری سفارش از دیتابیس */
@@ -12939,38 +13000,26 @@ $("#orderTrackingForm").addEventListener("submit", async event => {
 async function loadServerProducts(){
   try{
     const data = await apiRequest("products",{method:"GET"});
-
-    if(Array.isArray(data.products) && data.products.length){
-      const serverProducts = new Map(
-        data.products.map(product => [
-          Number(product.id),
-          product
-        ])
-      );
-
-      products = products
-        .map(product => {
-          const serverProduct = serverProducts.get(Number(product.id));
-
-          return serverProduct
-            ? normalizeProduct({
-                ...product,
-                stock:Number(serverProduct.stock || 0)
-              })
-            : product;
-        })
-        .filter(Boolean);
-
-      safeStorageSet(
-        "local",
-        "nova-editable-products",
-        JSON.stringify(products)
-      );
-
-      renderProducts();
-      renderAdminList();
-      renderFestival();
-      cleanupCart();
+    if(Array.isArray(data.products)){
+      products = data.products.map(product => normalizeProduct({
+        id:Number(product.id),
+        name:product.name,
+        category:product.category,
+        categoryFa:product.categoryFa,
+        description:product.description,
+        image:product.image,
+        price:Number(product.price || 0),
+        oldPrice:Number(product.oldPrice || 0),
+        stock:Number(product.stock || 0),
+        rating:Number(product.rating || 5),
+        reviews:Number(product.reviews || 0)
+      })).filter(Boolean);
+      if(data.festival && typeof data.festival === "object" && Object.keys(data.festival).length){
+        festival = normalizeFestival(data.festival);
+        safeStorageSet("local","datacenter-festival",JSON.stringify(festival));
+      }
+      safeStorageSet("local","nova-editable-products",JSON.stringify(products));
+      renderProducts(); renderAdminList(); renderFestival(); cleanupCart();
     }
   }catch(e){
     console.warn("Server products:",e.message);
@@ -12978,7 +13027,7 @@ async function loadServerProducts(){
 }
 async function syncProductsToServer(){
   if(!isAdmin()||!serverAdminCsrf)return;
-  try{await apiRequest("admin_products_sync",{csrf:"admin",data:{products:products.map(p=>({id:p.id,name:p.name,category:p.category,categoryFa:p.categoryFa,description:p.description,image:p.image,price:p.price,sale_price:festivalProductPrice(p),oldPrice:p.oldPrice,discount:festivalDiscountForProduct(p),stock:p.stock}))}});}catch(e){showToast("ذخیره دیتابیس محصول انجام نشد: "+e.message);}
+  try{await apiRequest("admin_products_sync",{csrf:"admin",data:{products:products.map(p=>({id:p.id,name:p.name,category:p.category,categoryFa:p.categoryFa,description:p.description,image:p.image,price:p.price,oldPrice:p.oldPrice,discount:festivalDiscountForProduct(p),stock:p.stock,rating:p.rating,reviews:p.reviews})),festival}});}catch(e){showToast("ذخیره دیتابیس محصول انجام نشد: "+e.message);}
 }
 function saveProducts(){products=products.slice(0,SECURITY.maxProducts).map(normalizeProduct).filter(Boolean);safeStorageSet("local","nova-editable-products",JSON.stringify(products));renderProducts();renderAdminList();renderFestival();cleanupCart();syncProductsToServer();}
 function saveFestival(){festival=normalizeFestival(festival);safeStorageSet("local","datacenter-festival",JSON.stringify(festival));renderFestival();renderProducts();renderCart();syncProductsToServer();}
@@ -13692,7 +13741,7 @@ $("#adminOrderStatusFilter").addEventListener(
   true
 );
 
-window.setTimeout(async()=>{await accountBootstrap();await loadServerProducts();},0);
+window.setTimeout(async()=>{await accountBootstrap();await loadServerProducts();await loadServerReviews(false);},0);
 
 migrateCancelledOrderInventory();
 setAdminMode(false);
@@ -13763,7 +13812,7 @@ function setOnlineCounterValue(value){
 
   countNode.textContent = value.toLocaleString("fa-IR");
   badgeNode.classList.remove("is-unavailable");
-  badgeNode.title = "تعداد واقعی کاربران فعال در لحظه";
+    badgeNode.title = "تعداد تقریبی دستگاه‌های فعال در ۴۵ ثانیه اخیر";
 }
 
 async function updateOnlineCounter(){
