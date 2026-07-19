@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/fix-13-audit-issues
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
