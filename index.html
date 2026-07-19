@@ -10973,7 +10973,9 @@ async function workerRequest(path, data){
     if(!response.ok || payload.ok === false){
       throw new Error(
         payload.message ||
-        `خطای ارتباط با سرویس حساب کاربری (${response.status})`
+        (response.status === 405
+          ? "مسیر ورود روی سرور با متد نادرست پاسخ داد؛ مطمئن شوید سایت از Render و آخرین نسخه بک‌اند اجرا می‌شود."
+          : `خطای ارتباط با سرویس حساب کاربری (${response.status})`)
       );
     }
 
@@ -11141,7 +11143,8 @@ async function apiRequest(action, options = {}){
 
     const result = await workerRequest("/login", {
       identity,
-      password
+      password,
+      remember:data.remember !== false
     });
 
     if(!saveServerSession(result)){

@@ -510,7 +510,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        if parsed.path == "/api":
+        if parsed.path == "/api" or parsed.path.startswith("/api/"):
             self.handle_api("GET", parsed)
             return
 
@@ -519,8 +519,27 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
 
-        if parsed.path == "/api":
+        if parsed.path == "/api" or parsed.path.startswith("/api/"):
             self.handle_api("POST", parsed)
+            return
+
+        self.send_error(404)
+
+    def do_OPTIONS(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+
+        if parsed.path == "/api" or parsed.path.startswith("/api/"):
+            self.send_response(204)
+            self.send_header("Allow", "GET, POST, OPTIONS")
+            self.send_header(
+                "Access-Control-Allow-Methods",
+                "GET, POST, OPTIONS",
+            )
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Content-Type, X-CSRF-Token",
+            )
+            self.end_headers()
             return
 
         self.send_error(404)
@@ -536,6 +555,11 @@ class Handler(BaseHTTPRequestHandler):
 
             query = urllib.parse.parse_qs(parsed.query)
             action = str(query.get("action", [""])[0])
+
+            if not action and parsed.path.startswith("/api/"):
+                action = parsed.path.removeprefix("/api/").strip("/")
+                action = action.replace("-", "_").replace("/", "_")
+
             data = self.read_json() if method == "POST" else {}
             result = self.dispatch(action, method, query, data)
 
@@ -564,7 +588,7 @@ class Handler(BaseHTTPRequestHandler):
             return {
                 "message": "سرور آزمایشی بدون دیتابیس آماده است.",
                 "database": False,
-                "sms": "local_gateway",
+                "sms": GATEWAY_MODE,
             }, 200, []
 
         if action == "request_code":
