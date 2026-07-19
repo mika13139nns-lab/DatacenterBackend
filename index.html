@@ -10602,7 +10602,17 @@ async function serverSessionRequest(path, options = {}){
       requestOptions.body = JSON.stringify(options.data || {});
     }
 
-    const response = await fetch(`${SMS_WORKER_URL}${path}`, requestOptions);
+    const requestUrl = new URL(`${SMS_WORKER_URL}${path}`);
+
+    if(options.query && typeof options.query === "object"){
+      Object.entries(options.query).forEach(([key, value]) => {
+        if(value !== undefined && value !== null && String(value) !== ""){
+          requestUrl.searchParams.set(key, String(value));
+        }
+      });
+    }
+
+    const response = await fetch(requestUrl.toString(), requestOptions);
 
     let payload = {};
     try{
@@ -10668,6 +10678,57 @@ function orderToServerShape(order, username = ""){
       line_total:item.lineTotal
     }))
   };
+}
+
+async function publicWorkerGet(path, query = {}){
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
+
+  try{
+    const requestUrl = new URL(`${SMS_WORKER_URL}${path}`);
+
+    Object.entries(query || {}).forEach(([key, value]) => {
+      if(value !== undefined && value !== null && String(value) !== ""){
+        requestUrl.searchParams.set(key, String(value));
+      }
+    });
+
+    const response = await fetch(requestUrl.toString(), {
+      method:"GET",
+      headers:{"Accept":"application/json"},
+      signal:controller.signal,
+      cache:"no-store"
+    });
+
+    let payload = {};
+    try{
+      payload = await response.json();
+    }catch{
+      payload = {};
+    }
+
+    if(!response.ok || payload.ok === false){
+      const error = new Error(
+        payload.message || `خطای دریافت اطلاعات (${response.status})`
+      );
+      error.status = response.status;
+      throw error;
+    }
+
+    return payload;
+  }catch(error){
+    if(error?.name === "AbortError"){
+      throw new Error("پاسخی از سرویس دریافت نشد؛ دوباره تلاش کنید.");
+    }
+
+    if(error instanceof TypeError){
+      throw new Error("ارتباط با سرویس برقرار نشد.");
+    }
+
+    throw error;
+  }finally{
+    window.clearTimeout(timeoutId);
+  }
 }
 
 async function workerRequest(path, data){
@@ -10890,11 +10951,19 @@ async function apiRequest(action, options = {}){
         const serverUser = accountUserFromServer(result.user);
 
         if(serverUser){
-          const userOrders = orders
-            .filter(order =>
-              normalizePhoneDigits(order.customer?.phone || "") === serverUser.phone
-            )
-            .map(order => orderToServerShape(order, serverUser.username));
+          let userOrders = [];
+
+          try{
+            const orderResult = await serverSessionRequest(
+              "/orders/my",
+              {method:"GET"}
+            );
+            userOrders = Array.isArray(orderResult.orders)
+              ? orderResult.orders
+              : [];
+          }catch(orderError){
+            console.warn("Server orders:", orderError.message);
+          }
 
           return {
             ok:true,
@@ -11108,107 +11177,35 @@ async function apiRequest(action, options = {}){
   }
 
   if(action === "create_order"){
-    const user = localSessionUser();
-    if(!user){
-      throw new Error("نشست شما پایان یافته است؛ دوباره وارد شوید.");
-    }
-
-    const requestedItems = Array.isArray(data.items) ? data.items : [];
-    if(!requestedItems.length){
-      throw new Error("سبد خرید خالی است.");
-    }
-
-    const trustedItems = requestedItems.map(row => {
-      const productId = Number(row.product_id);
-      const product = products.find(item => item.id === productId);
-      const quantity = Math.trunc(Number(row.quantity));
-      const limit = productOrderLimit(product);
-
-      if(!product || !Number.isInteger(quantity) || quantity < 1 || quantity > limit){
-        throw new Error("موجودی یا تعداد یکی از محصولات تغییر کرده است.");
-      }
-
-      const unitPrice = festivalProductPrice(product);
-      const originalPrice = Math.max(unitPrice, Number(product.price) || unitPrice);
-      const discount = festivalDiscountForProduct(product);
-
-      return {
-        productId:product.id,
-        name:product.name,
-        quantity,
-        unitPrice,
-        originalPrice,
-        discount,
-        lineTotal:unitPrice * quantity
-      };
-    });
-
-    const now = Date.now();
-    const order = normalizeOrder({
-      id:now,
-      code:generateOrderCode(),
-      customer:{
-        name:data.customer_name,
-        phone:user.phone,
+    return serverSessionRequest("/orders", {
+      method:"POST",
+      data:{
+        customer_name:data.customer_name,
         province:data.province,
         city:data.city,
-        postalCode:data.postal_code,
-        address:data.address
-      },
-      delivery:data.delivery === "pickup" ? "pickup" : "shipping",
-      note:data.note,
-      items:trustedItems,
-      total:trustedItems.reduce((sum,item) => sum + item.lineTotal, 0),
-      status:"new",
-      inventoryRestored:false,
-      createdAt:now,
-      updatedAt:now
+        postal_code:data.postal_code,
+        address:data.address,
+        delivery:data.delivery,
+        note:data.note,
+        items:Array.isArray(data.items)
+          ? data.items.map(item => ({
+              product_id:item.product_id,
+              quantity:item.quantity
+            }))
+          : []
+      }
     });
-
-    if(!order){
-      throw new Error("اطلاعات سفارش معتبر نیست.");
-    }
-
-    orders.unshift(order);
-    orders = orders.slice(0, SECURITY.maxOrders);
-    saveOrders();
-
-    products = products.map(product => {
-      const row = trustedItems.find(item => item.productId === product.id);
-      return row
-        ? {...product, stock:Math.max(0, product.stock - row.quantity)}
-        : product;
-    });
-    saveProducts();
-
-    return {
-      ok:true,
-      message:"سفارش با موفقیت ثبت شد.",
-      tracking_code:order.code,
-      order:orderToServerShape(order, user.username)
-    };
   }
 
   if(action === "track_order"){
-    const code = cleanSingleLine(data.code, 40).toUpperCase();
-    const phone = normalizePhoneDigits(data.phone || "");
-    const order = orders.find(item =>
-      item.code === code &&
-      normalizePhoneDigits(item.customer?.phone || "") === phone
-    );
-
-    if(!order){
-      throw new Error("سفارشی با این کد و شماره موبایل پیدا نشد.");
-    }
-
-    return {
-      ok:true,
-      order:orderToServerShape(order)
-    };
+    return workerRequest("/orders/track", {
+      code:data.code,
+      phone:data.phone
+    });
   }
 
   if(action === "products"){
-    return {ok:true, products:[]};
+    return publicWorkerGet("/products");
   }
 
   if(action === "admin_login"){
@@ -11289,82 +11286,44 @@ async function apiRequest(action, options = {}){
   }
 
   if(action === "admin_products_sync"){
-    return {ok:true, message:"محصولات در مرورگر ذخیره شدند."};
+    return serverSessionRequest("/admin/products/sync", {
+      method:"POST",
+      data:{
+        products:Array.isArray(data.products)
+          ? data.products
+          : []
+      }
+    });
   }
 
   if(action === "admin_orders"){
-    if(!isAdmin()) throw new Error("دسترسی مدیریت معتبر نیست.");
-
-    const search = cleanSingleLine(options.query?.q || "", 80)
-      .toLocaleLowerCase("fa");
-    const status = String(options.query?.status || "all");
-
-    const filteredOrders = [...orders]
-      .sort((a,b) => b.createdAt - a.createdAt)
-      .filter(order => {
-        const searchable = [
-          order.code,
-          order.customer?.name,
-          order.customer?.phone,
-          order.customer?.city,
-          order.customer?.address
-        ].join(" ").toLocaleLowerCase("fa");
-
-        return (
-          (!search || searchable.includes(search)) &&
-          (status === "all" || order.status === status)
-        );
-      })
-      .map(order => orderToServerShape(order));
-
-    return {
-      ok:true,
-      orders:filteredOrders,
-      csrf:"github-pages-demo-admin"
-    };
+    return serverSessionRequest("/admin/orders", {
+      method:"GET",
+      query:{
+        q:options.query?.q || "",
+        status:options.query?.status || "all"
+      }
+    });
   }
 
   if(action === "admin_order_status"){
-    if(!isAdmin()) throw new Error("دسترسی مدیریت معتبر نیست.");
-
-    const id = Number(data.id);
-    const nextStatus = String(data.status || "");
-    const order = orders.find(item => item.id === id);
-
-    if(!order) throw new Error("سفارش پیدا نشد.");
-    if(!Object.prototype.hasOwnProperty.call(ORDER_STATUSES, nextStatus)){
-      throw new Error("وضعیت سفارش معتبر نیست.");
-    }
-
-    const previousStatus = order.status;
-    if(nextStatus === "cancelled" && previousStatus !== "cancelled"){
-      restoreOrderInventory(order);
-    }else if(previousStatus === "cancelled" && nextStatus !== "cancelled"){
-      if(!reserveOrderInventory(order)){
-        throw new Error("موجودی کافی برای فعال‌کردن دوباره سفارش وجود ندارد.");
+    return serverSessionRequest("/admin/orders/status", {
+      method:"POST",
+      data:{
+        id:data.id,
+        status:data.status
       }
-    }
-
-    order.status = nextStatus;
-    order.updatedAt = Date.now();
-    saveOrders();
-    return {ok:true, message:"وضعیت سفارش تغییر کرد."};
+    });
   }
 
   if(action === "admin_order_delete"){
-    if(!isAdmin()) throw new Error("دسترسی مدیریت معتبر نیست.");
-
-    const id = Number(data.id);
-    const order = orders.find(item => item.id === id);
-    if(!order) throw new Error("سفارش پیدا نشد.");
-
-    restoreOrderInventory(order);
-    orders = orders.filter(item => item.id !== id);
-    saveOrders();
-    return {ok:true, message:"سفارش حذف شد."};
+    return serverSessionRequest("/admin/orders/delete", {
+      method:"POST",
+      data:{id:data.id}
+    });
   }
 
-  throw new Error("این قابلیت در نسخه آزمایشی هنوز فعال نشده است.");
+  throw new Error("این قابلیت هنوز فعال نشده است.");
 }
 
 function activeAccountNoticeBox(){
@@ -12071,7 +12030,7 @@ $("#accountButton")?.addEventListener("click", event => {
   }
 });
 
-$("#adminStoreButton")?.addEventListener("click", event => {
+$("#adminStoreButton")?.addEventListener("click", async event => {
   event.preventDefault();
   event.stopPropagation();
 
@@ -12086,6 +12045,11 @@ $("#adminStoreButton")?.addEventListener("click", event => {
   serverAdminCsrf = "worker-session";
   setAdminMode(true);
   openAdmin();
+
+  await loadServerProducts();
+  await syncProductsToServer();
+  await loadServerAdminUsers();
+  await loadServerAdminOrders();
 });
 $("#closeAccountModal").addEventListener("click", closeAccountModal);
 $("#closeProfileModal").addEventListener("click", closeProfileModal);
@@ -12832,7 +12796,44 @@ $("#orderTrackingForm").addEventListener("submit", async event => {
 }, true);
 
 async function loadServerProducts(){
-  try{const data=await apiRequest("products",{method:"GET"});if(Array.isArray(data.products)&&data.products.length){products=data.products.map(p=>normalizeProduct({...p,price:p.price,oldPrice:p.oldPrice,stock:p.stock})).filter(Boolean);safeStorageSet("local","nova-editable-products",JSON.stringify(products));renderProducts();renderAdminList();renderFestival();cleanupCart();}}catch(e){console.warn("Server products:",e.message);}
+  try{
+    const data = await apiRequest("products",{method:"GET"});
+
+    if(Array.isArray(data.products) && data.products.length){
+      const serverProducts = new Map(
+        data.products.map(product => [
+          Number(product.id),
+          product
+        ])
+      );
+
+      products = products
+        .map(product => {
+          const serverProduct = serverProducts.get(Number(product.id));
+
+          return serverProduct
+            ? normalizeProduct({
+                ...product,
+                stock:Number(serverProduct.stock || 0)
+              })
+            : product;
+        })
+        .filter(Boolean);
+
+      safeStorageSet(
+        "local",
+        "nova-editable-products",
+        JSON.stringify(products)
+      );
+
+      renderProducts();
+      renderAdminList();
+      renderFestival();
+      cleanupCart();
+    }
+  }catch(e){
+    console.warn("Server products:",e.message);
+  }
 }
 async function syncProductsToServer(){
   if(!isAdmin()||!serverAdminCsrf)return;
@@ -13233,6 +13234,7 @@ $("#adminLoginForm").addEventListener("submit", async event => {
     closeAdminLogin();
     updateAccountButton();
     openAdmin();
+    await loadServerProducts();
     await syncProductsToServer();
     await loadServerAdminUsers();
     await loadServerAdminOrders();
