@@ -59,6 +59,10 @@ jobs:
           '''
           if bad in source:
               source = source.replace(bad, '')
+          source = source.replace(
+              "'  renderAdminMessages();\\n}\\n\\n\\nfunction saveCart(){'",
+              "'  renderAdminMessages();\\n}\\n\\nfunction saveCart(){'"
+          )
           patch_file.write_text(source, encoding='utf-8')
           PY
 
