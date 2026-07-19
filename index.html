@@ -7616,7 +7616,10 @@ function productCard(product){
   const canManageProduct = isAdmin();
   const managementControls = canManageProduct
     ? `
-        ${managementControls}
+        <div class="card-management">
+          <button class="edit-card" data-edit="${product.id}">ویرایش</button>
+          <button class="delete-card" data-delete="${product.id}">حذف</button>
+        </div>
       `
     : "";
 
@@ -7657,10 +7660,7 @@ function productCard(product){
             ${product.stock > 0 ? "＋" : "ناموجود"}
           </button>
         </div>
-        <div class="card-management">
-          <button class="edit-card" data-edit="${product.id}">ویرایش</button>
-          <button class="delete-card" data-delete="${product.id}">حذف</button>
-        </div>
+        ${managementControls}
       </div>
     </article>
   `;
