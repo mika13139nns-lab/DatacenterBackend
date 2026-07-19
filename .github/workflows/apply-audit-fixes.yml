@@ -6,6 +6,11 @@ on:
       - agent/fix-13-audit-issues
     paths-ignore:
       - audit-run.log
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - audit-run.log
   workflow_dispatch:
 
 permissions:
