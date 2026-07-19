@@ -1224,7 +1224,11 @@ async function handleRegister(request, env) {
 
 async function handlePasswordLogin(request, env) {
   const body = await request.json().catch(() => ({}));
-  const identity = String(body.identity || "").trim();
+  const identity = String(
+    body.identity ||
+    body.username ||
+    ""
+  ).trim();
   const password = normalizePassword(body.password);
 
   if (!identity || !password) {
@@ -3317,6 +3321,32 @@ export class PresenceCounter extends DurableObject {
     };
   }
 
+  async fetch(request) {
+    const url = new URL(request.url);
+
+    if (request.method !== "POST" || url.pathname !== "/ping") {
+      return new Response(JSON.stringify({ ok: false }), {
+        status: 404,
+        headers: { "Content-Type": "application/json; charset=utf-8" }
+      });
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const result = await this.ping(body.visitor_id);
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        online: result.online,
+        ttl_ms: result.ttl_ms
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json; charset=utf-8" }
+      }
+    );
+  }
+
   async alarm() {
     const now = Date.now();
 
@@ -3349,7 +3379,19 @@ async function handlePresence(request, env) {
   }
 
   const stub = env.PRESENCE.getByName("global");
-  const result = await stub.ping(visitorId);
+  const response = await stub.fetch("https://presence.local/ping", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ visitor_id: visitorId })
+  });
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok || result.ok !== true) {
+    return json(env, 502, {
+      ok: false,
+      message: "شمارنده آنلاین در دسترس نیست."
+    });
+  }
 
   return json(env, 200, {
     ok: true,

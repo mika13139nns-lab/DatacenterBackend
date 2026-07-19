@@ -11394,7 +11394,7 @@ async function apiRequest(action, options = {}){
     }
 
     const result = await workerRequest("/admin-login", {
-      username:identity,
+      identity,
       password
     });
 
@@ -13855,19 +13855,30 @@ const ONLINE_REQUEST_TIMEOUT_MS = 8_000;
 let onlineMemoryVisitorId = "";
 let onlineCounterPending = false;
 
+function isValidOnlineVisitorId(id){
+  return /^[a-zA-Z0-9._:-]{16,100}$/.test(String(id || "").trim());
+}
+
+function createOnlineVisitorId(){
+  const id = crypto.randomUUID?.() ||
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  return isValidOnlineVisitorId(id)
+    ? id
+    : `${Date.now()}-${Math.random().toString(36).slice(2).padEnd(16,"0")}`;
+}
+
 function onlineVisitorId(){
   try{
     let id = localStorage.getItem(ONLINE_PRESENCE_KEY);
-    if(!id){
-      id = crypto.randomUUID?.() ||
-        `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    if(!isValidOnlineVisitorId(id)){
+      id = createOnlineVisitorId();
       localStorage.setItem(ONLINE_PRESENCE_KEY,id);
     }
     return id;
   }catch(error){
-    if(!onlineMemoryVisitorId){
-      onlineMemoryVisitorId = crypto.randomUUID?.() ||
-        `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    if(!isValidOnlineVisitorId(onlineMemoryVisitorId)){
+      onlineMemoryVisitorId = createOnlineVisitorId();
     }
     return onlineMemoryVisitorId;
   }
