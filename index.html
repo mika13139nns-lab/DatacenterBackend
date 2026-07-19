@@ -6199,7 +6199,6 @@ body:not(.admin-mode) .card-management{
           <select id="adminOrderStatusFilter">
             <option value="all">همه وضعیت‌ها</option>
             <option value="new">جدید</option>
-            <option value="confirmed">تأییدشده</option>
             <option value="preparing">در حال آماده‌سازی</option>
             <option value="shipped">ارسال‌شده</option>
             <option value="completed">تکمیل‌شده</option>
@@ -6786,7 +6785,6 @@ document.addEventListener("beforeinput", event => {
 
 const ORDER_STATUSES = Object.freeze({
   new:"جدید",
-  confirmed:"تأییدشده",
   preparing:"در حال آماده‌سازی",
   shipped:"ارسال‌شده",
   completed:"تکمیل‌شده",
