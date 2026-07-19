@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - agent/fix-13-audit-issues
+    paths-ignore:
+      - audit-run.log
   workflow_dispatch:
 
 permissions:
@@ -25,82 +27,98 @@ jobs:
       - name: Apply fixes and validate
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
 
           if grep -q "Audit fixes v5" worker.js; then
             echo "Audit fixes already applied."
             exit 0
           fi
 
-          node <<'NODE'
-          const fs = require('node:fs');
-          let source = fs.readFileSync('scripts/bootstrap-audit-fixes.cjs', 'utf8');
-          source = source.replace(/\nimport\("\.\/\.apply-audit-fixes\.mjs"\)[\s\S]*$/, '');
-          eval(source);
-          NODE
+          (
+            set -euo pipefail
 
-          python3 <<'PY'
-          from pathlib import Path
+            node <<'NODE'
+            const fs = require('node:fs');
+            let source = fs.readFileSync('scripts/bootstrap-audit-fixes.cjs', 'utf8');
+            source = source.replace(/\nimport\("\.\/\.apply-audit-fixes\.mjs"\)[\s\S]*$/, '');
+            eval(source);
+            NODE
 
-          patch_file = Path('scripts/.apply-audit-fixes.mjs')
-          source = patch_file.read_text(encoding='utf-8')
-          bad = '''index = replaceOnce(
-            index,
-            'function saveReviews(){\\n  reviews = reviews',
-            'function saveReviews(){\\n  reviews = reviews',
-            'reviews function anchor'
-          );
-          '''
-          if bad in source:
-              source = source.replace(bad, '')
-          patch_file.write_text(source, encoding='utf-8')
-          PY
+            python3 <<'PY'
+            from pathlib import Path
 
-          node scripts/.apply-audit-fixes.mjs
+            patch_file = Path('scripts/.apply-audit-fixes.mjs')
+            source = patch_file.read_text(encoding='utf-8')
+            bad = '''index = replaceOnce(
+              index,
+              'function saveReviews(){\\n  reviews = reviews',
+              'function saveReviews(){\\n  reviews = reviews',
+              'reviews function anchor'
+            );
+            '''
+            if bad in source:
+                source = source.replace(bad, '')
+            patch_file.write_text(source, encoding='utf-8')
+            PY
 
-          python3 <<'PY'
-          from pathlib import Path
+            node scripts/.apply-audit-fixes.mjs
 
-          path = Path('index.html')
-          html = path.read_text(encoding='utf-8')
-          replacements = {
-              'if(!isValidPersianLocation(province)){': 'if(delivery !== "pickup" && !isValidPersianLocation(province)){',
-              'if(!isValidPersianLocation(city)){': 'if(delivery !== "pickup" && !isValidPersianLocation(city)){',
-              'if(!/^\\d{5,20}$/.test(postalCode)){': 'if(delivery !== "pickup" && !/^\\d{5,20}$/.test(postalCode)){',
-              'if(address.length < 5){': 'if(delivery !== "pickup" && address.length < 5){',
-              'address.required = true;': 'address.required = !pickup;'
-          }
-          for old, new in replacements.items():
-              if old not in html:
-                  raise SystemExit(f'Missing checkout anchor: {old}')
-              html = html.replace(old, new, 1)
-          path.write_text(html, encoding='utf-8')
-          PY
+            python3 <<'PY'
+            from pathlib import Path
 
-          node --check worker.js
+            path = Path('index.html')
+            html = path.read_text(encoding='utf-8')
+            replacements = {
+                'if(!isValidPersianLocation(province)){': 'if(delivery !== "pickup" && !isValidPersianLocation(province)){',
+                'if(!isValidPersianLocation(city)){': 'if(delivery !== "pickup" && !isValidPersianLocation(city)){',
+                'if(!/^\\d{5,20}$/.test(postalCode)){': 'if(delivery !== "pickup" && !/^\\d{5,20}$/.test(postalCode)){',
+                'if(address.length < 5){': 'if(delivery !== "pickup" && address.length < 5){',
+                'address.required = true;': 'address.required = !pickup;'
+            }
+            for old, new in replacements.items():
+                if old not in html:
+                    raise SystemExit(f'Missing checkout anchor: {old}')
+                html = html.replace(old, new, 1)
+            path.write_text(html, encoding='utf-8')
+            PY
 
-          python3 <<'PY'
-          from pathlib import Path
-          import re
+            node --check worker.js
 
-          html = Path('index.html').read_text(encoding='utf-8')
-          scripts = re.findall(r'<script(?:\s[^>]*)?>([\s\S]*?)</script>', html, flags=re.I)
-          if not scripts:
-              raise SystemExit('No inline JavaScript found')
-          Path('/tmp/index-inline.js').write_text('\n'.join(scripts), encoding='utf-8')
-          PY
-          node --check /tmp/index-inline.js
+            python3 <<'PY'
+            from pathlib import Path
+            import re
 
-          grep -q "handleCreateOrderAudit" worker.js
-          grep -q "verified_token_uses" worker.js
-          grep -q "order_request_keys" worker.js
-          grep -q "store_reviews" worker.js
-          grep -q "contact_messages" worker.js
-          grep -q "request_id:createOrderRequestId" index.html
-          grep -q "تقریبی" index.html
+            html = Path('index.html').read_text(encoding='utf-8')
+            scripts = re.findall(r'<script(?:\s[^>]*)?>([\s\S]*?)</script>', html, flags=re.I)
+            if not scripts:
+                raise SystemExit('No inline JavaScript found')
+            Path('/tmp/index-inline.js').write_text('\n'.join(scripts), encoding='utf-8')
+            PY
+            node --check /tmp/index-inline.js
+
+            grep -q "handleCreateOrderAudit" worker.js
+            grep -q "verified_token_uses" worker.js
+            grep -q "order_request_keys" worker.js
+            grep -q "store_reviews" worker.js
+            grep -q "contact_messages" worker.js
+            grep -q "request_id:createOrderRequestId" index.html
+            grep -q "تقریبی" index.html
+          ) > audit-run.log 2>&1
+
+          status=$?
+          cat audit-run.log
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add worker.js index.html scripts/worker-audit-block.js scripts/.apply-audit-fixes.mjs
+
+          if [ "$status" -ne 0 ]; then
+            git add -f audit-run.log
+            git commit -m "Record audit workflow failure" || true
+            git push
+            exit "$status"
+          fi
+
+          rm -f audit-run.log
+          git add -A audit-run.log worker.js index.html scripts/worker-audit-block.js scripts/.apply-audit-fixes.mjs
           git commit -m "Fix 13 audited store issues"
           git push
