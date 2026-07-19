@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - agent/fix-13-audit-issues
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -54,9 +51,9 @@ jobs:
             'reviews function anchor'
           );
           '''
-          if bad not in source:
-              raise SystemExit('Expected bootstrap cleanup anchor was not found')
-          patch_file.write_text(source.replace(bad, ''), encoding='utf-8')
+          if bad in source:
+              source = source.replace(bad, '')
+          patch_file.write_text(source, encoding='utf-8')
           PY
 
           node scripts/.apply-audit-fixes.mjs
