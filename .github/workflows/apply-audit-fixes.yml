@@ -4,13 +4,9 @@ on:
   push:
     branches:
       - agent/fix-13-audit-issues
-    paths-ignore:
-      - audit-run.log
   pull_request:
     branches:
       - main
-    paths-ignore:
-      - audit-run.log
   workflow_dispatch:
 
 permissions:
@@ -24,6 +20,7 @@ jobs:
         with:
           ref: agent/fix-13-audit-issues
           fetch-depth: 0
+          show-progress: false
 
       - uses: actions/setup-node@v4
         with:
@@ -35,7 +32,7 @@ jobs:
           set +e
 
           if grep -q "Audit fixes v5" worker.js; then
-            echo "Audit fixes already applied."
+            echo "Audit fixes already applied." | tee audit-run.log
             exit 0
           fi
 
@@ -112,18 +109,24 @@ jobs:
 
           status=$?
           cat audit-run.log
+          exit "$status"
 
+      - name: Upload audit log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-run-log
+          path: audit-run.log
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Commit validated fixes
+        if: success()
+        shell: bash
+        run: |
+          rm -f audit-run.log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          if [ "$status" -ne 0 ]; then
-            git add -f audit-run.log
-            git commit -m "Record audit workflow failure" || true
-            git push
-            exit "$status"
-          fi
-
-          rm -f audit-run.log
-          git add -A audit-run.log worker.js index.html scripts/worker-audit-block.js scripts/.apply-audit-fixes.mjs
+          git add worker.js index.html scripts/worker-audit-block.js scripts/.apply-audit-fixes.mjs
           git commit -m "Fix 13 audited store issues"
           git push
