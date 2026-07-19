@@ -116,6 +116,7 @@ jobs:
             scripts/worker-audit-block.js
           if-no-files-found: error
           retention-days: 1
+          include-hidden-files: true
 
       - name: Commit validated fixes
         if: success()
