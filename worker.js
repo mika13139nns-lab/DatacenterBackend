@@ -33,7 +33,7 @@ function headers(env) {
   return {
     "Access-Control-Allow-Origin": allowedOrigin,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-CSRF-Token",
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
     "Vary": "Origin"
@@ -861,6 +861,7 @@ function routeApiAction(request, url) {
 
   const routes = {
     health: { method: "GET", pathname: "/health" },
+    presence_ping: { method: "POST", pathname: "/presence/ping" },
     request_code: { method: "POST", pathname: "/request-code" },
     verify_code: { method: "POST", pathname: "/verify-code" },
     register: { method: "POST", pathname: "/register" },

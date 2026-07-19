@@ -13849,7 +13849,6 @@ renderCurrentRoute(false);
 
 /* شمارنده واقعی کاربران آنلاین؛ بدون عدد ساختگی یا مقدار پیش‌فرض */
 const ONLINE_PRESENCE_KEY = "datacenter-online-visitor-v4";
-const ONLINE_PRESENCE_URL = API_ENDPOINT;
 const ONLINE_PING_INTERVAL_MS = 15_000;
 const ONLINE_REQUEST_TIMEOUT_MS = 8_000;
 
@@ -13910,9 +13909,12 @@ async function updateOnlineCounter(){
   );
 
   try{
-    const response = await fetch(`${ONLINE_PRESENCE_URL}/presence/ping`,{
+    const requestUrl = new URL(workerUrl("/api"), window.location.href);
+    requestUrl.searchParams.set("action", "presence_ping");
+
+    const response = await fetch(requestUrl.toString(),{
       method:"POST",
-      headers:{"Content-Type":"application/json"},
+      headers:{"Content-Type":"application/json","Accept":"application/json"},
       body:JSON.stringify({
         visitor_id:onlineVisitorId(),
         visibility:"visible",
