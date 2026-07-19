@@ -768,12 +768,26 @@ class Handler(BaseHTTPRequestHandler):
                 USER_BY_USERNAME[username] = user_id
                 flow["used"] = True
 
+                sid = secrets.token_urlsafe(48)
+                csrf = secrets.token_urlsafe(32)
+                SESSIONS[sid] = {
+                    "user_id": user_id,
+                    "csrf": csrf,
+                    "expires_at": now() + REMEMBER_SECONDS,
+                }
+
+            cookie = (
+                f"dc_user_session={sid}; Path=/; HttpOnly; "
+                f"SameSite=Lax; Max-Age={REMEMBER_SECONDS}"
+            )
+
             return {
                 "message": (
-                    "ثبت‌نام انجام شد؛ حالا نام کاربری و رمز را "
-                    "دوباره وارد و وارد حساب شوید."
-                )
-            }, 201, []
+                    "ثبت‌نام انجام شد و وارد حساب شدید."
+                ),
+                "user": public_user(user),
+                "csrf": csrf,
+            }, 201, [cookie]
 
         if action == "login":
             if method != "POST":
@@ -1126,6 +1140,16 @@ class Handler(BaseHTTPRequestHandler):
             return {
                 "message": "ورود مدیر انجام شد.",
                 "csrf": csrf,
+                "user": {
+                    "id": 0,
+                    "username": ADMIN_USERNAME.lower(),
+                    "phone": "",
+                    "wallet_balance": 0,
+                    "is_admin": True,
+                    "is_active": True,
+                    "created_at": "",
+                    "updated_at": "",
+                },
             }, 200, [cookie]
 
         if action == "admin_logout":
