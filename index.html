@@ -5177,6 +5177,19 @@ body:not(.admin-mode) .card-management{
   font-weight:900;
 }
 
+
+.profile-audit-build{
+  display:inline-flex;
+  align-items:center;
+  min-height:23px;
+  padding:0 8px;
+  margin-inline-start:7px;
+  border-radius:999px;
+  background:#e9f8f0;
+  color:#08734d;
+  font-size:9px;
+  font-weight:900;
+}
 </style>
 </head>
 <body data-page="home">
@@ -5828,7 +5841,7 @@ body:not(.admin-mode) .card-management{
       </div>
       <div class="profile-settings-card">
         <div class="profile-section-title">
-          <h3>ویرایش پروفایل</h3>
+          <h3>ویرایش پروفایل <span class="profile-audit-build">نسخه پایدار ۴</span></h3>
         </div>
         <div class="profile-notice" id="profileNotice" hidden></div>
         <div class="profile-settings-grid">
@@ -9119,6 +9132,75 @@ async function sanitizeUploadedImage(file){
   return output;
 }
 
+async function sanitizeProfileAvatar(file){
+  if(!file || !ALLOWED_IMAGE_TYPES.has(file.type)){
+    throw new Error("فقط تصویر JPG، PNG یا WEBP مجاز است.");
+  }
+
+  if(file.size <= 0 || file.size > SECURITY.maxUploadBytes){
+    throw new Error("حجم تصویر باید کمتر از ۴ مگابایت باشد.");
+  }
+
+  const source = await readFileAsDataUrl(file);
+  const image = await loadImage(source);
+
+  if(
+    !image.naturalWidth ||
+    !image.naturalHeight ||
+    image.naturalWidth > 12_000 ||
+    image.naturalHeight > 12_000
+  ){
+    throw new Error("ابعاد تصویر معتبر نیست.");
+  }
+
+  const maxDimension = 512;
+  const scale = Math.min(
+    1,
+    maxDimension / image.naturalWidth,
+    maxDimension / image.naturalHeight
+  );
+  const width = Math.max(
+    1,
+    Math.round(image.naturalWidth * scale)
+  );
+  const height = Math.max(
+    1,
+    Math.round(image.naturalHeight * scale)
+  );
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext("2d", {alpha:true});
+
+  if(!context){
+    throw new Error(
+      "پردازش تصویر در این مرورگر پشتیبانی نمی‌شود."
+    );
+  }
+
+  context.drawImage(image, 0, 0, width, height);
+
+  const attempts = [
+    ["image/webp", .80],
+    ["image/webp", .66],
+    ["image/jpeg", .68],
+    ["image/jpeg", .52]
+  ];
+
+  for(const [type, quality] of attempts){
+    const output = canvas.toDataURL(type, quality);
+
+    if(output.length <= 700_000 && safeImageSrc(output)){
+      return output;
+    }
+  }
+
+  throw new Error(
+    "تصویر پس از بهینه‌سازی هنوز بیش از حد بزرگ است."
+  );
+}
+
 function resetProductForm(){
   $("#productForm").reset();
   $("#editProductId").value = "";
@@ -10633,18 +10715,17 @@ function accountUserFromServer(serverUser){
   if(!serverUser || typeof serverUser !== "object") return null;
 
   const phone = normalizePhoneDigits(serverUser.phone || "");
-  const localUser = localUsers().find(user => user.phone === phone) || null;
 
   return {
     username:
       serverUser.username ||
       serverUser.full_name ||
-      localUser?.username ||
       (phone ? `کاربر ${phone.slice(-4)}` : `کاربر ${serverUser.id || ""}`),
     phone,
-    wallet_balance:Number(localUser?.wallet_balance || 0),
-    avatar:localUser?.avatar || "",
-    last_username_change_at:localUser?.last_username_change_at || "",
+    wallet_balance:Number(serverUser.wallet_balance || 0),
+    avatar:safeImageSrc(serverUser.avatar || ""),
+    last_username_change_at:
+      serverUser.last_username_change_at || "",
     server_user_id:serverUser.id || null,
     is_admin:Boolean(serverUser.is_admin),
     is_active:serverUser.is_active !== false,
@@ -10652,6 +10733,24 @@ function accountUserFromServer(serverUser){
     created_at:serverUser.created_at || "",
     updated_at:serverUser.updated_at || ""
   };
+}
+
+function clearExpiredAccountSession(){
+  clearServerSession();
+  currentUser = null;
+  accountOrders = [];
+  accountCsrf = "";
+  serverAdminCsrf = "";
+  serverAdminOrders = [];
+  serverAdminUsers = [];
+  serverAdminUserId = 0;
+  adminAuthorized = false;
+  adminExpiresAt = 0;
+  document.body.classList.remove("admin-mode");
+  closeRequiredPasswordModal(true);
+  closeAdmin();
+  updateAccountButton();
+  renderCart();
 }
 
 async function serverSessionRequest(path, options = {}){
@@ -10704,8 +10803,14 @@ async function serverSessionRequest(path, options = {}){
     }
 
     if(!response.ok || payload.ok === false){
+      if(response.status === 401 || response.status === 403){
+        clearExpiredAccountSession();
+      }
+
       const error = new Error(
-        payload.message || `خطای بررسی نشست (${response.status})`
+        (response.status === 401 || response.status === 403)
+          ? "نشست شما پایان یافته است؛ دوباره وارد شوید."
+          : (payload.message || `خطای بررسی نشست (${response.status})`)
       );
       error.status = response.status;
       throw error;
@@ -11027,64 +11132,51 @@ async function apiRequest(action, options = {}){
   }
 
   if(action === "me"){
-    if(getServerSessionToken()){
-      try{
-        const result = await serverSessionRequest("/me", {method:"GET"});
-        const serverUser = accountUserFromServer(result.user);
-
-        if(serverUser){
-          let userOrders = [];
-
-          try{
-            const orderResult = await serverSessionRequest(
-              "/orders/my",
-              {method:"GET"}
-            );
-            userOrders = Array.isArray(orderResult.orders)
-              ? orderResult.orders
-              : [];
-          }catch(orderError){
-            console.warn("Server orders:", orderError.message);
-          }
-
-          return {
-            ok:true,
-            authenticated:true,
-            csrf:"worker-session",
-            user:serverUser,
-            orders:userOrders,
-            session_expires_at:result.session_expires_at || ""
-          };
-        }
-      }catch(error){
-        if(error?.status === 401 || error?.status === 403){
-          clearServerSession();
-        }
-        /* در قطع موقت اینترنت، نشست محلیِ معتبر همچنان قابل استفاده است. */
-      }
+    if(!getServerSessionToken()){
+      return {
+        ok:true,
+        authenticated:false,
+        csrf:"",
+        user:null,
+        orders:[]
+      };
     }
 
-    const user = localSessionUser();
-    const userOrders = user
-      ? orders
-          .filter(order =>
-            normalizePhoneDigits(order.customer?.phone || "") === user.phone
-          )
-          .map(order => orderToServerShape(order, user.username))
-      : [];
+    const result = await serverSessionRequest("/me", {
+      method:"GET"
+    });
+    const serverUser = accountUserFromServer(result.user);
+
+    if(!serverUser){
+      clearExpiredAccountSession();
+      throw new Error("اطلاعات حساب از سرور دریافت نشد.");
+    }
+
+    let userOrders = [];
+
+    try{
+      const orderResult = await serverSessionRequest(
+        "/orders/my",
+        {method:"GET"}
+      );
+
+      userOrders = Array.isArray(orderResult.orders)
+        ? orderResult.orders.map(normalizeServerOrderRecord)
+        : [];
+    }catch(orderError){
+      if(orderError?.status === 401 || orderError?.status === 403){
+        throw orderError;
+      }
+      console.warn("Server orders:", orderError.message);
+    }
 
     return {
       ok:true,
-      authenticated:Boolean(user),
-      csrf:user ? "github-pages-local-user" : "",
-      user:user ? {
-        username:user.username,
-        phone:user.phone,
-        wallet_balance:user.wallet_balance || 0,
-        avatar:user.avatar || "",
-        last_username_change_at:user.last_username_change_at || ""
-      } : null,
-      orders:userOrders
+      authenticated:true,
+      csrf:"worker-session",
+      user:serverUser,
+      orders:userOrders,
+      session_expires_at:result.session_expires_at || ""
     };
   }
 
@@ -11173,88 +11265,45 @@ async function apiRequest(action, options = {}){
   }
 
   if(action === "update_profile"){
-    const sessionUser = localSessionUser();
-    if(!sessionUser){
-      throw new Error("نشست شما پایان یافته است؛ دوباره وارد شوید.");
-    }
-
-    const users = localUsers();
-    const index = users.findIndex(user =>
-      user.username === sessionUser.username && user.phone === sessionUser.phone
-    );
-    if(index < 0){
-      throw new Error("حساب شما پیدا نشد؛ دوباره وارد شوید.");
-    }
-
-    const user = {...users[index]};
-    const oldUsername = user.username;
-    const nextUsername = String(data.username || oldUsername).trim().toLowerCase();
-    const nextAvatarRaw = data.avatar === null || data.avatar === undefined
-      ? String(user.avatar || "")
+    const nextUsername = String(data.username || "")
+      .trim()
+      .toLowerCase();
+    const avatar = data.avatar === null || data.avatar === undefined
+      ? ""
       : String(data.avatar || "").trim();
-    const nextAvatar = nextAvatarRaw ? safeImageSrc(nextAvatarRaw) : "";
 
-    if(nextAvatarRaw && !nextAvatar){
-      throw new Error("تصویر پروفایل معتبر نیست.");
+    if(!/^[a-z][a-z0-9_]{3,23}$/.test(nextUsername)){
+      throw new Error("نام کاربری جدید شرایط لازم را ندارد.");
     }
 
-    if(nextUsername !== oldUsername){
-      if(!/^[a-z][a-z0-9_]{3,23}$/.test(nextUsername)){
-        throw new Error("نام کاربری جدید شرایط لازم را ندارد.");
-      }
-
-      if(nextUsername === "admin"){
-        throw new Error("نام کاربری admin برای مدیریت رزرو شده است.");
-      }
-
-      const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
-      const lastChangedAt = Date.parse(user.last_username_change_at || "");
-      if(Number.isFinite(lastChangedAt) && Date.now() - lastChangedAt < THIRTY_DAYS){
-        const nextAllowed = new Date(lastChangedAt + THIRTY_DAYS).toLocaleDateString("fa-IR");
-        throw new Error(`توجه: در طی ۳۰ روز فقط یک بار میتوانید تغییر نام کاربری دهید. زمان بعدی: ${nextAllowed}`);
-      }
-
-      if(users.some((item, itemIndex) =>
-        itemIndex !== index && item.username === nextUsername
-      )){
-        throw new Error("این نام کاربری قبلاً ثبت شده است.");
-      }
-
-      /* هش رمز حساب‌های فعلی با نام زمان ساخت رمز تولید شده است.
-         این مقدار ثابت می‌ماند تا تغییر نام، ورود با رمز قبلی را خراب نکند. */
-      if(!user.password_hash_username){
-        user.password_hash_username = oldUsername;
-      }
-      user.username = nextUsername;
-      user.last_username_change_at = new Date().toISOString();
+    if(nextUsername === "admin"){
+      throw new Error("نام کاربری admin برای مدیریت رزرو شده است.");
     }
 
-    user.avatar = nextAvatar;
-    users[index] = user;
-
-    if(!writeLocalJson(LOCAL_USERS_KEY, users)){
-      throw new Error("ذخیره تغییرات پروفایل انجام نشد؛ فضای ذخیره‌سازی مرورگر را بررسی کنید.");
+    if(avatar && !safeImageSrc(avatar)){
+      throw new Error(
+        "تصویر پروفایل معتبر نیست یا حجم آن بیش از حد مجاز است."
+      );
     }
 
-    const localSessionValue = String(safeStorageGet("local", LOCAL_SESSION_KEY) || "");
-    const tabSessionValue = String(safeStorageGet("session", SESSION_SESSION_KEY) || "");
-    if(localSessionValue === oldUsername){
-      safeStorageSet("local", LOCAL_SESSION_KEY, user.username);
-    }
-    if(tabSessionValue === oldUsername){
-      safeStorageSet("session", SESSION_SESSION_KEY, user.username);
+    const result = await serverSessionRequest("/profile", {
+      method:"POST",
+      data:{
+        username:nextUsername,
+        avatar
+      }
+    });
+
+    const user = accountUserFromServer(result.user);
+
+    if(!user){
+      throw new Error("اطلاعات پروفایل از سرور دریافت نشد.");
     }
 
     return {
-      ok:true,
-      message:"پروفایل با موفقیت به‌روزرسانی شد.",
-      user:{
-        username:user.username,
-        phone:user.phone,
-        wallet_balance:user.wallet_balance || 0,
-        avatar:user.avatar || "",
-        last_username_change_at:user.last_username_change_at || ""
-      }
+      ...result,
+      csrf:"worker-session",
+      user
     };
   }
 
@@ -11717,6 +11766,9 @@ function closeProfileModal(){
   $("#profileModal").classList.remove("open");
   $("#profileModal").setAttribute("aria-hidden","true");
   document.body.classList.remove("account-lock");
+  pendingProfileAvatar = currentUser?.avatar || "";
+  profileAvatarDirty = false;
+  setProfileNotice("");
 }
 
 function updateAccountButton(){
@@ -11857,6 +11909,8 @@ function renderAccountProfile(){
 }
 
 async function accountBootstrap(showError = false, enforcePasswordChange = true){
+  const previousUser = currentUser;
+
   try{
     const data = await apiRequest("me", {method:"GET"});
     accountCsrf = data.csrf || "";
@@ -11864,8 +11918,12 @@ async function accountBootstrap(showError = false, enforcePasswordChange = true)
     accountOrders = Array.isArray(data.orders)
       ? data.orders.map(normalizeServerOrderRecord)
       : [];
+
     updateAccountButton();
-    renderAccountProfile();
+
+    if(currentUser){
+      renderAccountProfile();
+    }
 
     if(enforcePasswordChange && currentUser?.must_change_password){
       window.setTimeout(openRequiredPasswordModal, 0);
@@ -11873,9 +11931,26 @@ async function accountBootstrap(showError = false, enforcePasswordChange = true)
 
     return currentUser;
   }catch(error){
-    currentUser = null; accountOrders = []; updateAccountButton();
-    if(showError) showToast(error.message);
-    return null;
+    if(error?.status === 401 || error?.status === 403){
+      clearExpiredAccountSession();
+
+      if(showError){
+        showToast("نشست شما پایان یافته است؛ دوباره وارد شوید.");
+      }
+
+      return null;
+    }
+
+    currentUser = previousUser;
+    updateAccountButton();
+
+    if(showError){
+      showToast(
+        error.message || "دریافت اطلاعات حساب ممکن نشد."
+      );
+    }
+
+    return currentUser;
   }
 }
 
@@ -12119,11 +12194,18 @@ $("#requiredNewPassword")?.addEventListener(
   () => paintPasswordRules("#requiredNewPassword","#requiredPasswordRules")
 );
 
-$("#accountButton")?.addEventListener("click", event => {
+$("#accountButton")?.addEventListener("click", async event => {
   event.preventDefault();
   event.stopPropagation();
 
   if(currentUser){
+    const verifiedUser = await accountBootstrap(true, false);
+
+    if(!verifiedUser){
+      openAccountModal("login");
+      return;
+    }
+
     if(requireFreshPersonalPassword()) return;
     openProfileModal();
   }else{
@@ -12134,6 +12216,13 @@ $("#accountButton")?.addEventListener("click", event => {
 $("#adminStoreButton")?.addEventListener("click", async event => {
   event.preventDefault();
   event.stopPropagation();
+
+  const verifiedUser = await accountBootstrap(true, false);
+
+  if(!verifiedUser){
+    openAccountModal("login");
+    return;
+  }
 
   if(requireFreshPersonalPassword()) return;
 
@@ -12194,7 +12283,7 @@ $("#profileAvatarFile")?.addEventListener("change", async event => {
   const file = event.target.files?.[0];
   if(!file) return;
   try{
-    pendingProfileAvatar = await sanitizeUploadedImage(file);
+    pendingProfileAvatar = await sanitizeProfileAvatar(file);
     profileAvatarDirty = true;
     renderProfileAvatar("#profileAvatarPreview", pendingProfileAvatar);
     setProfileNotice("عکس پروفایل انتخاب شد. برای ثبت نهایی، دکمه ذخیره تغییرات را بزنید.");
@@ -12205,18 +12294,42 @@ $("#profileAvatarFile")?.addEventListener("change", async event => {
 });
 $("#profileSettingsForm")?.addEventListener("submit", async event => {
   event.preventDefault();
-  if(!currentUser){
+
+  if(!currentUser || !getServerSessionToken()){
     closeProfileModal();
-    openAccountModal("login", "ابتدا وارد حساب خود شوید.");
+    openAccountModal(
+      "login",
+      "نشست شما پایان یافته است؛ دوباره وارد شوید."
+    );
     return;
   }
+
   const usernameInput = $("#profileUsernameInput");
-  const nextUsername = String(usernameInput?.value || "").trim().toLowerCase();
-  const avatarToSave = profileAvatarDirty ? pendingProfileAvatar : (currentUser.avatar || "");
+  const nextUsername = String(
+    usernameInput?.value || ""
+  ).trim().toLowerCase();
+  const avatarToSave = profileAvatarDirty
+    ? pendingProfileAvatar
+    : (currentUser.avatar || "");
+
+  if(!/^[a-z][a-z0-9_]{3,23}$/.test(nextUsername)){
+    setProfileNotice(
+      "نام کاربری جدید شرایط لازم را ندارد.",
+      true
+    );
+    return;
+  }
+
   setProfileNotice("در حال ذخیره تغییرات پروفایل...");
+
   const form = event.currentTarget;
-  const submitButton = form?.querySelector('button[type="submit"]');
-  if(submitButton){ submitButton.disabled = true; }
+  const submitButton =
+    form?.querySelector('button[type="submit"]');
+
+  if(submitButton){
+    submitButton.disabled = true;
+  }
+
   try{
     const data = await apiRequest("update_profile", {
       data:{
@@ -12224,18 +12337,36 @@ $("#profileSettingsForm")?.addEventListener("submit", async event => {
         avatar:avatarToSave
       }
     });
-    currentUser = data.user || currentUser;
+
+    currentUser = data.user;
     pendingProfileAvatar = currentUser.avatar || "";
     profileAvatarDirty = false;
-    await accountBootstrap(false);
+    accountCsrf = data.csrf || accountCsrf;
+
     updateAccountButton();
     renderAccountProfile();
-    setProfileNotice(data.message || "پروفایل با موفقیت به‌روزرسانی شد.");
+    setProfileNotice(
+      data.message || "پروفایل با موفقیت به‌روزرسانی شد."
+    );
     showToast("پروفایل ذخیره شد.");
   }catch(error){
-    setProfileNotice(error.message, true);
+    if(error?.status === 401 || error?.status === 403){
+      closeProfileModal();
+      openAccountModal(
+        "login",
+        "نشست شما پایان یافته است؛ دوباره وارد شوید."
+      );
+      return;
+    }
+
+    setProfileNotice(
+      error.message || "ذخیره پروفایل انجام نشد.",
+      true
+    );
   }finally{
-    if(submitButton){ submitButton.disabled = false; }
+    if(submitButton){
+      submitButton.disabled = false;
+    }
   }
 });
 $$('[data-account-tab]').forEach(button => button.addEventListener('click', () => {
