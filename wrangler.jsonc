@@ -1,0 +1,37 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "divine-tooth-7f3b",
+  "main": "worker.js",
+  "compatibility_date": "2026-07-16",
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PRESENCE",
+        "class_name": "PresenceCounter"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "PresenceCounter"
+      ]
+    }
+  ],
+
+  "d1_databases": [
+    {
+      "binding": "datacenter_db",
+      "database_name": "datacenter-db",
+      "database_id": "6e98b36a-af4a-49c4-addb-d99c19567a8a"
+    }
+  ],
+
+  "vars": {
+    "ALLOWED_ORIGIN": "https://mika13139nns-lab.github.io",
+    "SIM_NUMBER": "2"
+  }
+}
