@@ -10556,7 +10556,7 @@ document.addEventListener("click", event => {
 
 
 /* ================= حساب کاربری، دیتابیس و سفارش سروری ================= */
-const API_ENDPOINT = "";
+const API_ENDPOINT = "https://divine-tooth-7f3b.danyalll200002.workers.dev";
 let currentUser = null;
 let accountCsrf = "";
 let accountOrders = [];
@@ -10584,6 +10584,15 @@ const SESSION_SESSION_KEY = "datacenter-demo-session-tab-v2";
 const LOCAL_ORDERS_KEY = "datacenter-demo-orders-v2";
 const SERVER_SESSION_TOKEN_KEY = "datacenter-worker-session-v1";
 const SERVER_SESSION_EXPIRY_KEY = "datacenter-worker-session-expiry-v1";
+
+function workerUrl(path = "/api"){
+  const base = String(API_ENDPOINT || "").trim().replace(/\/+$/, "");
+  const safePath = String(path || "/").startsWith("/")
+    ? String(path || "/")
+    : `/${path}`;
+
+  return base ? `${base}${safePath}` : safePath;
+}
 
 function readLocalJson(key, fallback){
   try{
@@ -10789,7 +10798,7 @@ async function serverSessionRequest(path, options = {}){
       requestOptions.body = JSON.stringify(options.data || {});
     }
 
-    const requestUrl = new URL(`/api`, window.location.origin);
+    const requestUrl = new URL(workerUrl("/api"), window.location.href);
     const actionMap = {
       "/me":"me",
       "/logout":"logout",
@@ -10889,7 +10898,7 @@ async function publicWorkerGet(path, query = {}){
   const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
 
   try{
-    const requestUrl = new URL(`/api`, window.location.origin);
+    const requestUrl = new URL(workerUrl("/api"), window.location.href);
     requestUrl.searchParams.set("action", path.replace(/^\//, ""));
 
     Object.entries(query || {}).forEach(([key, value]) => {
@@ -10950,7 +10959,7 @@ async function workerRequest(path, data){
       "/orders/track":"track_order",
       "/admin-login":"admin_login"
     };
-    const requestUrl = new URL(`/api`, window.location.origin);
+    const requestUrl = new URL(workerUrl("/api"), window.location.href);
     requestUrl.searchParams.set("action", actionMap[path] || path.replace(/^\//, ""));
 
     const response = await fetch(requestUrl.toString(), {
@@ -10974,7 +10983,7 @@ async function workerRequest(path, data){
       throw new Error(
         payload.message ||
         (response.status === 405
-          ? "مسیر ورود روی سرور با متد نادرست پاسخ داد؛ مطمئن شوید سایت از Render و آخرین نسخه بک‌اند اجرا می‌شود."
+          ? "مسیر ورود روی Worker با متد نادرست پاسخ داد؛ مطمئن شوید سایت از آخرین نسخه بک‌اند Cloudflare Worker استفاده می‌کند."
           : `خطای ارتباط با سرویس حساب کاربری (${response.status})`)
       );
     }
@@ -11028,7 +11037,7 @@ async function apiRequest(action, options = {}){
   await new Promise(resolve => window.setTimeout(resolve, 100));
 
   if(action === "health"){
-    const response = await fetch(`/health`, {
+    const response = await fetch(workerUrl("/health"), {
       cache:"no-store"
     });
     return response.json();
@@ -13833,7 +13842,7 @@ renderCurrentRoute(false);
 
 /* شمارنده واقعی کاربران آنلاین؛ بدون عدد ساختگی یا مقدار پیش‌فرض */
 const ONLINE_PRESENCE_KEY = "datacenter-online-visitor-v4";
-const ONLINE_PRESENCE_URL = "https://divine-tooth-7f3b.danyalll200002.workers.dev";
+const ONLINE_PRESENCE_URL = API_ENDPOINT;
 const ONLINE_PING_INTERVAL_MS = 15_000;
 const ONLINE_REQUEST_TIMEOUT_MS = 8_000;
 
