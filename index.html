@@ -5157,6 +5157,12 @@ body.required-password-lock{overflow:hidden!important}
   cursor:not-allowed;
 }
 
+
+/* لایه دفاعی دوم: کنترل محصول فقط در حالت مدیریت معتبر */
+body:not(.admin-mode) .card-management{
+  display:none!important;
+}
+
 </style>
 </head>
 <body data-page="home">
@@ -7609,6 +7615,13 @@ function productImage(product){
 }
 
 function productCard(product){
+  const canManageProduct = isAdmin();
+  const managementControls = canManageProduct
+    ? `
+        ${managementControls}
+      `
+    : "";
+
   const productFestivalDiscount = festivalDiscountForProduct(product);
   const festivalActive = productFestivalDiscount > 0;
   const finalPrice = festivalProductPrice(product);
@@ -8727,14 +8740,36 @@ function getAdminSession(){
   return {expires: adminExpiresAt};
 }
 
+function hasAuthenticatedAdminAccount(){
+  return Boolean(
+    currentUser?.is_admin &&
+    !currentUser?.must_change_password &&
+    getServerSessionToken()
+  );
+}
+
 function isAdmin(){
-  return Boolean(getAdminSession());
+  return Boolean(
+    getAdminSession() &&
+    hasAuthenticatedAdminAccount()
+  );
 }
 
 function setAdminMode(enabled){
-  adminAuthorized = Boolean(enabled);
-  adminExpiresAt = enabled ? Date.now() + SECURITY.sessionIdleMs : 0;
-  document.body.classList.toggle("admin-mode", enabled);
+  const safeEnabled = Boolean(
+    enabled &&
+    hasAuthenticatedAdminAccount()
+  );
+
+  adminAuthorized = safeEnabled;
+  adminExpiresAt = safeEnabled
+    ? Date.now() + SECURITY.sessionIdleMs
+    : 0;
+
+  document.body.classList.toggle(
+    "admin-mode",
+    safeEnabled
+  );
 
   renderProducts();
   showAdminSection(activeAdminSection || "add_product");
@@ -11668,6 +11703,21 @@ function updateAccountButton(){
       "aria-hidden",
       canOpenAdmin ? "false" : "true"
     );
+  }
+
+  if(!hasAuthenticatedAdminAccount()){
+    const hadAdminUi =
+      adminAuthorized ||
+      document.body.classList.contains("admin-mode");
+
+    adminAuthorized = false;
+    adminExpiresAt = 0;
+    serverAdminCsrf = "";
+    document.body.classList.remove("admin-mode");
+
+    if(hadAdminUi){
+      renderProducts();
+    }
   }
 }
 
