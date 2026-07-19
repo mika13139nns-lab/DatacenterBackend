@@ -63,6 +63,10 @@ jobs:
               "'  renderAdminMessages();\\n}\\n\\n\\nfunction saveCart(){'",
               "'  renderAdminMessages();\\n}\\n\\nfunction saveCart(){'"
           )
+          source = source.replace(
+              "'    badgeNode.title = \"تعداد واقعی کاربران فعال در لحظه\";'",
+              "'  badgeNode.title = \"تعداد واقعی کاربران فعال در لحظه\";'"
+          )
           patch_file.write_text(source, encoding='utf-8')
           PY
 
