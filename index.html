@@ -10576,7 +10576,7 @@ let pendingProfileAvatar = "";
 let profileAvatarDirty = false;
 
 
-const SMS_WORKER_URL = "https://divine-tooth-7f3b.danyalll200002.workers.dev";
+const SMS_WORKER_URL = "";
 const LOCAL_USERS_KEY = "datacenter-demo-users-v2";
 const LOCAL_SESSION_KEY = "datacenter-demo-session-v2";
 const LOCAL_SESSION_EXPIRY_KEY = "datacenter-demo-session-expiry-v2";
@@ -10680,6 +10680,7 @@ function sessionTokenFrom(payload){
     payload.sessionToken ||
     nested.session_token ||
     nested.sessionToken ||
+    (payload.csrf ? "cookie-session" : "") ||
     ""
   ).trim();
 }
@@ -10771,6 +10772,11 @@ async function serverSessionRequest(path, options = {}){
       "Accept":"application/json"
     };
 
+    const csrf = path.startsWith("/admin/") ? serverAdminCsrf : accountCsrf;
+    if(csrf && csrf !== "worker-session"){
+      headers["X-CSRF-Token"] = csrf;
+    }
+
     const requestOptions = {
       method,
       headers,
@@ -10783,7 +10789,18 @@ async function serverSessionRequest(path, options = {}){
       requestOptions.body = JSON.stringify(options.data || {});
     }
 
-    const requestUrl = new URL(`${SMS_WORKER_URL}${path}`);
+    const requestUrl = new URL(`/api`, window.location.origin);
+    const actionMap = {
+      "/me":"me",
+      "/logout":"logout",
+      "/orders":"create_order",
+      "/orders/my":"me",
+      "/admin/orders":"admin_orders",
+      "/admin/orders/status":"admin_order_status",
+      "/admin/orders/delete":"admin_order_delete",
+      "/admin/products/sync":"admin_products_sync"
+    };
+    requestUrl.searchParams.set("action", actionMap[path] || path.replace(/^\//, ""));
 
     if(options.query && typeof options.query === "object"){
       Object.entries(options.query).forEach(([key, value]) => {
@@ -10872,7 +10889,8 @@ async function publicWorkerGet(path, query = {}){
   const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
 
   try{
-    const requestUrl = new URL(`${SMS_WORKER_URL}${path}`);
+    const requestUrl = new URL(`/api`, window.location.origin);
+    requestUrl.searchParams.set("action", path.replace(/^\//, ""));
 
     Object.entries(query || {}).forEach(([key, value]) => {
       if(value !== undefined && value !== null && String(value) !== ""){
@@ -10923,7 +10941,19 @@ async function workerRequest(path, data){
   const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
 
   try{
-    const response = await fetch(`${SMS_WORKER_URL}${path}`, {
+    const actionMap = {
+      "/request-code":"request_code",
+      "/verify-code":"verify_code",
+      "/register":"register",
+      "/login":"login",
+      "/reset-password":"reset_password",
+      "/orders/track":"track_order",
+      "/admin-login":"admin_login"
+    };
+    const requestUrl = new URL(`/api`, window.location.origin);
+    requestUrl.searchParams.set("action", actionMap[path] || path.replace(/^\//, ""));
+
+    const response = await fetch(requestUrl.toString(), {
       method:"POST",
       headers:{
         "Content-Type":"application/json"
@@ -10996,7 +11026,7 @@ async function apiRequest(action, options = {}){
   await new Promise(resolve => window.setTimeout(resolve, 100));
 
   if(action === "health"){
-    const response = await fetch(`${SMS_WORKER_URL}/health`, {
+    const response = await fetch(`/health`, {
       cache:"no-store"
     });
     return response.json();
@@ -11096,7 +11126,7 @@ async function apiRequest(action, options = {}){
 
     return {
       ...result,
-      csrf:"worker-session",
+      csrf:result.csrf || "worker-session",
       user
     };
   }
@@ -11126,7 +11156,7 @@ async function apiRequest(action, options = {}){
 
     return {
       ...result,
-      csrf:"worker-session",
+      csrf:result.csrf || "worker-session",
       user
     };
   }
@@ -11173,7 +11203,7 @@ async function apiRequest(action, options = {}){
     return {
       ok:true,
       authenticated:true,
-      csrf:"worker-session",
+      csrf:result.csrf || "worker-session",
       user:serverUser,
       orders:userOrders,
       session_expires_at:result.session_expires_at || ""
@@ -11225,7 +11255,7 @@ async function apiRequest(action, options = {}){
 
     return {
       ...result,
-      csrf:"worker-session",
+      csrf:result.csrf || "worker-session",
       user:accountUserFromServer(result.user)
     };
   }
@@ -11302,7 +11332,7 @@ async function apiRequest(action, options = {}){
 
     return {
       ...result,
-      csrf:"worker-session",
+      csrf:result.csrf || "worker-session",
       user
     };
   }
@@ -11318,12 +11348,7 @@ async function apiRequest(action, options = {}){
         address:data.address,
         delivery:data.delivery,
         note:data.note,
-        items:Array.isArray(data.items)
-          ? data.items.map(item => ({
-              product_id:item.product_id,
-              quantity:item.quantity
-            }))
-          : []
+        items:Array.isArray(data.items) ? data.items : []
       }
     });
   }
@@ -11349,8 +11374,8 @@ async function apiRequest(action, options = {}){
       throw new Error("نام کاربری/شماره و رمز مدیر را وارد کنید.");
     }
 
-    const result = await workerRequest("/login", {
-      identity,
+    const result = await workerRequest("/admin-login", {
+      username:identity,
       password
     });
 
@@ -11366,11 +11391,11 @@ async function apiRequest(action, options = {}){
     }
 
     currentUser = user;
-    accountCsrf = "worker-session";
+    accountCsrf = result.csrf || "worker-session";
 
     return {
       ...result,
-      csrf:"worker-session",
+      csrf:result.csrf || "worker-session",
       user,
       message:"ورود مدیر با موفقیت انجام شد."
     };
