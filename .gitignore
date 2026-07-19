@@ -1,6 +1,21 @@
-__pycache__/
-*.pyc
+# Local secrets and environment files
 .env
 .env.*
-storage/
+.dev.vars
+.dev.vars.*
+
+# Cloudflare Wrangler local state
+.wrangler/
+
+# Node.js dependencies
+node_modules/
+
+# Local/editor files
 .DS_Store
+Thumbs.db
+.vscode/
+
+# Legacy Python leftovers
+__pycache__/
+*.pyc
+storage/
