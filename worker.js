@@ -849,6 +849,45 @@ async function authenticateRequest(request, env, updateLastUsed = true) {
   };
 }
 
+
+function routeApiAction(request, url) {
+  if (url.pathname !== "/api") {
+    return { method: request.method, pathname: url.pathname };
+  }
+
+  const action = String(url.searchParams.get("action") || "")
+    .trim()
+    .toLowerCase();
+
+  const routes = {
+    health: { method: "GET", pathname: "/health" },
+    request_code: { method: "POST", pathname: "/request-code" },
+    verify_code: { method: "POST", pathname: "/verify-code" },
+    register: { method: "POST", pathname: "/register" },
+    login: { method: "POST", pathname: "/login" },
+    reset_password: { method: "POST", pathname: "/reset-password" },
+    change_password: { method: "POST", pathname: "/change-password" },
+    update_profile: { method: "POST", pathname: "/profile" },
+    set_username: { method: "POST", pathname: "/profile/username" },
+    me: { method: "GET", pathname: "/me" },
+    logout: { method: "POST", pathname: "/logout" },
+    products: { method: "GET", pathname: "/products" },
+    create_order: { method: "POST", pathname: "/orders" },
+    track_order: { method: "POST", pathname: "/orders/track" },
+    admin_login: { method: "POST", pathname: "/admin-login" },
+    admin_users: { method: "GET", pathname: "/admin/users" },
+    admin_user_status: { method: "POST", pathname: "/admin/users/status" },
+    admin_user_revoke_sessions: { method: "POST", pathname: "/admin/users/revoke-sessions" },
+    admin_user_temporary_password: { method: "POST", pathname: "/admin/users/temporary-password" },
+    admin_products_sync: { method: "POST", pathname: "/admin/products/sync" },
+    admin_orders: { method: "GET", pathname: "/admin/orders" },
+    admin_order_status: { method: "POST", pathname: "/admin/orders/status" },
+    admin_order_delete: { method: "POST", pathname: "/admin/orders/delete" }
+  };
+
+  return routes[action] || { method: request.method, pathname: url.pathname };
+}
+
 async function handleRequestCode(request, env) {
   const body = await request.json().catch(() => ({}));
   const phone = normalizePhone(body.phone);
@@ -1246,6 +1285,41 @@ async function handlePasswordLogin(request, env) {
     session_token: session.token,
     session_expires_at: session.expiresAt,
     user: serializeUser(user)
+  });
+}
+
+
+async function handleAdminLogin(request, env) {
+  const response = await handlePasswordLogin(request, env);
+
+  if (!response.ok) {
+    return response;
+  }
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!payload.user || !payload.user.is_admin) {
+    if (payload.session_token) {
+      const database = requireDatabase(env);
+      await database
+        .prepare(`
+          UPDATE sessions
+          SET revoked_at = CURRENT_TIMESTAMP
+          WHERE token_hash = ?
+        `)
+        .bind(await hash(payload.session_token))
+        .run();
+    }
+
+    return json(env, 403, {
+      ok: false,
+      message: "این حساب دسترسی مدیریت ندارد."
+    });
+  }
+
+  return json(env, 200, {
+    ...payload,
+    message: "ورود مدیر با موفقیت انجام شد."
   });
 }
 
@@ -3298,8 +3372,9 @@ export default {
     }
 
     const url = new URL(request.url);
+    const route = routeApiAction(request, url);
 
-    if (request.method === "GET" && url.pathname === "/health") {
+    if (route.method === "GET" && route.pathname === "/health") {
       return json(env, 200, {
         ok: true,
         sms_configured: Boolean(
@@ -3326,162 +3401,169 @@ export default {
 
     try {
       if (
-        request.method === "POST" &&
-        url.pathname === "/presence/ping"
+        route.method === "POST" &&
+        route.pathname === "/presence/ping"
       ) {
         return await handlePresence(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/request-code"
+        route.method === "POST" &&
+        route.pathname === "/request-code"
       ) {
         return await handleRequestCode(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/verify-code"
+        route.method === "POST" &&
+        route.pathname === "/verify-code"
       ) {
         return await handleVerifyCode(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/register"
+        route.method === "POST" &&
+        route.pathname === "/register"
       ) {
         return await handleRegister(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/login"
+        route.method === "POST" &&
+        route.pathname === "/login"
       ) {
         return await handlePasswordLogin(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/reset-password"
+        route.method === "POST" &&
+        route.pathname === "/reset-password"
       ) {
         return await handleResetPassword(request, env);
       }
 
       if (
-        request.method === "GET" &&
-        url.pathname === "/admin/users"
+        route.method === "POST" &&
+        route.pathname === "/admin-login"
+      ) {
+        return await handleAdminLogin(request, env);
+      }
+
+      if (
+        route.method === "GET" &&
+        route.pathname === "/admin/users"
       ) {
         return await handleAdminUsers(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/admin/users/status"
+        route.method === "POST" &&
+        route.pathname === "/admin/users/status"
       ) {
         return await handleAdminUserStatus(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/admin/users/revoke-sessions"
+        route.method === "POST" &&
+        route.pathname === "/admin/users/revoke-sessions"
       ) {
         return await handleAdminRevokeSessions(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/admin/users/temporary-password"
+        route.method === "POST" &&
+        route.pathname === "/admin/users/temporary-password"
       ) {
         return await handleAdminTemporaryPassword(request, env);
       }
 
       if (
-        request.method === "GET" &&
-        url.pathname === "/products"
+        route.method === "GET" &&
+        route.pathname === "/products"
       ) {
         return await handlePublicProducts(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/admin/products/sync"
+        route.method === "POST" &&
+        route.pathname === "/admin/products/sync"
       ) {
         return await handleAdminProductsSync(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/orders"
+        route.method === "POST" &&
+        route.pathname === "/orders"
       ) {
         return await handleCreateOrder(request, env);
       }
 
       if (
-        request.method === "GET" &&
-        url.pathname === "/orders/my"
+        route.method === "GET" &&
+        route.pathname === "/orders/my"
       ) {
         return await handleMyOrders(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/orders/track"
+        route.method === "POST" &&
+        route.pathname === "/orders/track"
       ) {
         return await handleTrackOrder(request, env);
       }
 
       if (
-        request.method === "GET" &&
-        url.pathname === "/admin/orders"
+        route.method === "GET" &&
+        route.pathname === "/admin/orders"
       ) {
         return await handleAdminOrders(request, env, url);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/admin/orders/status"
+        route.method === "POST" &&
+        route.pathname === "/admin/orders/status"
       ) {
         return await handleAdminOrderStatus(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/admin/orders/delete"
+        route.method === "POST" &&
+        route.pathname === "/admin/orders/delete"
       ) {
         return await handleAdminOrderDelete(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/change-password"
+        route.method === "POST" &&
+        route.pathname === "/change-password"
       ) {
         return await handleChangePassword(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/profile"
+        route.method === "POST" &&
+        route.pathname === "/profile"
       ) {
         return await handleUpdateProfile(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/profile/username"
+        route.method === "POST" &&
+        route.pathname === "/profile/username"
       ) {
         return await handleSetUsername(request, env);
       }
 
       if (
-        request.method === "GET" &&
-        url.pathname === "/me"
+        route.method === "GET" &&
+        route.pathname === "/me"
       ) {
         return await handleMe(request, env);
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/logout"
+        route.method === "POST" &&
+        route.pathname === "/logout"
       ) {
         return await handleLogout(request, env);
       }

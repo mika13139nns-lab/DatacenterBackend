@@ -1,61 +1,51 @@
-# فروشگاه دیتاسنتر — GitHub + Render
+# فروشگاه دیتاسنتر — GitHub Pages + Cloudflare Worker
 
-این نسخه برای اجرای عمومی سایت روی Render آماده شده است. GitHub کد را نگه می‌دارد و Render سایت و سرور Python را اجرا می‌کند.
+این پروژه از Render یا Python استفاده نمی‌کند. فرانت‌اند با `index.html` از GitHub Pages سرو می‌شود و بک‌اند، یک Cloudflare Worker با فایل ورودی `worker.js` است.
 
-## امکانات تستی
+## معماری
 
-- ثبت‌نام با کد پیامکی واقعی از SMS Gate Cloud
-- ورود کاربر
-- انتخاب SIM 1 یا SIM 2 از Environment Variables
-- پنل مدیریت
-- سفارش و پیگیری سفارش
-- بدون دیتابیس دائمی
+- **Frontend:** فایل `index.html` روی GitHub Pages
+- **Backend:** Cloudflare Worker در `worker.js`
+- **Config:** تنظیمات Worker در `wrangler.jsonc`
+- **Database:** Cloudflare D1 از طریق binding با نام `datacenter_db`
+- **Presence:** Durable Object از طریق binding با نام `PRESENCE`
+- **SMS:** از SMS gateway تنظیم‌شده در secrets/vars محیط Worker استفاده می‌شود
 
-> این نسخه برای تست است. کاربران و سفارش‌ها در RAM نگه داشته می‌شوند و با Restart یا Deploy مجدد Render پاک می‌شوند.
+## اجرای محلی
 
-## آپلود در GitHub
+```bash
+npx wrangler dev
+```
 
-1. یک Repository جدید بسازید.
-2. تمام فایل‌های همین پوشه را در ریشه Repository آپلود کنید.
-3. فایل `.env.example` فقط نمونه است و رمز واقعی داخل آن قرار ندهید.
-4. Username، Password و Device ID واقعی را هرگز داخل GitHub ثبت نکنید.
+## استقرار تولید
 
-## ساخت روی Render
+```bash
+npx wrangler deploy
+```
 
-1. در Render گزینه `New +` و سپس `Blueprint` را انتخاب کنید.
-2. Repository گیت‌هاب را متصل کنید.
-3. Render فایل `render.yaml` را شناسایی می‌کند.
-4. مقدار Environment Variableهای محرمانه را وارد کنید:
+## تنظیمات محرمانه
 
-- `SMS_GATE_USERNAME`: نام کاربری Cloud
-- `SMS_GATE_PASSWORD`: رمز Cloud
-- `SMS_GATE_DEVICE_ID`: شناسه دستگاه Cloud
-- `SMS_GATE_SIM_NUMBER`: عدد `1` یا `2`
-- `ADMIN_PASSWORD`: رمز مدیریت سایت
+هیچ رمز، API key، توکن، اطلاعات SMS، اطلاعات مدیر یا merchant ID را داخل فایل‌های commit‌شده قرار ندهید. مقادیر محرمانه باید با Cloudflare Worker secrets یا فایل محلی `.dev.vars` تنظیم شوند.
 
-5. Deploy را اجرا کنید.
-6. پس از آماده‌شدن، Render یک آدرس عمومی HTTPS می‌دهد.
+نمونه موارد لازم برای محیط Worker:
 
-## تغییر سیم‌کارت
+- `SMS_USERNAME`
+- `SMS_PASSWORD`
+- `SMS_DEVICE_ID`
+- `OTP_SECRET`
+- `SESSION_SECRET` در صورت استفاده از قابلیت مرتبط
 
-در Render وارد Service شوید:
+## بررسی سلامت Worker
 
-`Environment → SMS_GATE_SIM_NUMBER`
+پس از اجرای Worker، مسیر زیر باید JSON موفق برگرداند:
 
-- `1` برای سیم‌کارت اول
-- `2` برای سیم‌کارت دوم
+```text
+https://YOUR-WORKER-DOMAIN/health
+```
 
-بعد `Save Changes` را بزنید تا سرویس دوباره Deploy شود.
+## نکات مهم توسعه
 
-## بررسی سلامت سرور
-
-آدرس زیر باید JSON موفق برگرداند:
-
-`https://YOUR-RENDER-DOMAIN/health`
-
-## نکات ضروری
-
-- Cloud Server برنامه SMS Gate باید روشن و آنلاین باشد.
-- گوشی فرستنده باید اینترنت داشته باشد.
-- برای تشخیص سیم‌ها، مجوز Phone برنامه فعال باشد.
-- GitHub Pages برای این پروژه لازم نیست، چون خود Render فایل `index.html` و API را با یک دامنه سرو می‌کند.
+- فایل‌های قدیمی Python/Render مانند `app.py`، `render.yaml` و `requirements.txt` نباید به مخزن برگردند.
+- مسیرهای API باید با مسیرهای پیاده‌سازی‌شده در `worker.js` هماهنگ باشند.
+- bindingهای `datacenter_db` و `PRESENCE` در `wrangler.jsonc` باید حفظ شوند.
+- فرانت‌اند برای API از Worker استفاده می‌کند و روی GitHub Pages به بک‌اند Python یا Render وابسته نیست.
